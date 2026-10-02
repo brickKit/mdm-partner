@@ -229,3 +229,77 @@ func TestCreditLimit_REST的NaN_Inf_科学计数法等写法返回400(t *testing
 			base.Version, got[0].CreditLimit, got[0].Version)
 	}
 }
+
+// TestUpdate与SetStatus_REST版本过期答409：契约写明 Update 与 SetStatus 带的
+// version 过期时失败（gRPC ABORTED），REST 上就是 409；库里不变。
+func TestUpdate与SetStatus_REST版本过期答409(t *testing.T) {
+	r, _ := testRepo(t)
+	eng := engine(service.New(r, slog.Default()))
+	ctx := context.Background()
+
+	c, err := r.Create(ctx, repo.CreateInput{
+		IdempotencyKey: runKey("http-stale"), Code: runKey("C-HTTP-STALE"), Name: "版本冲突测试"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := "/mdm/customer/customers/" + c.ID
+	if code, body := do(t, eng, http.MethodPatch, path, map[string]any{
+		"idempotency_key": runKey("http-stale-upd"), "version": c.Version + 1, "name": "新名字"}); code != http.StatusConflict {
+		t.Errorf("PATCH 带过期 version 应返回 409，实际 %d：%s", code, body)
+	}
+	if code, body := do(t, eng, http.MethodPost, path+"/status", map[string]any{
+		"idempotency_key": runKey("http-stale-status"), "version": c.Version + 1, "status": "DISABLED"}); code != http.StatusConflict {
+		t.Errorf("POST /status 带过期 version 应返回 409，实际 %d：%s", code, body)
+	}
+
+	got, _, err := r.BatchGet(ctx, []string{c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Name != "版本冲突测试" || got[0].Status != "ACTIVE" || got[0].Version != c.Version {
+		t.Fatalf("版本冲突时不该改库，实际 %d 条", len(got))
+	}
+}
+
+// TestCreate_REST重复code答409：显式传入的 code 已被别的客户占用，是调用方的错
+// （导入时撞了编号），答 409，不是 500。
+func TestCreate_REST重复code答409(t *testing.T) {
+	r, _ := testRepo(t)
+	eng := engine(service.New(r, slog.Default()))
+
+	taken := runKey("C-HTTP-DUP")
+	if _, err := r.Create(context.Background(), repo.CreateInput{
+		IdempotencyKey: runKey("http-dup-first"), Code: taken, Name: "先来的客户"}); err != nil {
+		t.Fatal(err)
+	}
+	if code, body := do(t, eng, http.MethodPost, "/mdm/customer/customers", map[string]string{
+		"idempotency_key": runKey("http-dup-second"), "code": taken, "name": "后来的客户"}); code != http.StatusConflict {
+		t.Fatalf("重复 code 应返回 409，实际 %d：%s", code, body)
+	}
+}
+
+// TestCustomer_REST不存在或不是数字的id答404：按 id 找不到客户（含不是数字的
+// id）时，读、改、改状态、加联系人都答 404——不是 409（版本冲突）也不是 500。
+func TestCustomer_REST不存在或不是数字的id答404(t *testing.T) {
+	r, _ := testRepo(t)
+	eng := engine(service.New(r, slog.Default()))
+
+	for _, id := range []string{"999999999", "abc"} {
+		path := "/mdm/customer/customers/" + id
+		if code, body := do(t, eng, http.MethodGet, path, nil); code != http.StatusNotFound {
+			t.Errorf("GET id=%s 应返回 404，实际 %d：%s", id, code, body)
+		}
+		if code, body := do(t, eng, http.MethodPatch, path, map[string]any{
+			"idempotency_key": runKey("http-404-upd"), "version": 1, "name": "x"}); code != http.StatusNotFound {
+			t.Errorf("PATCH id=%s 应返回 404，实际 %d：%s", id, code, body)
+		}
+		if code, body := do(t, eng, http.MethodPost, path+"/status", map[string]any{
+			"idempotency_key": runKey("http-404-status"), "version": 1, "status": "DISABLED"}); code != http.StatusNotFound {
+			t.Errorf("POST /status id=%s 应返回 404，实际 %d：%s", id, code, body)
+		}
+		if code, body := do(t, eng, http.MethodPost, path+"/contacts", map[string]any{
+			"idempotency_key": runKey("http-404-contact"), "contact": map[string]any{"name": "张三"}}); code != http.StatusNotFound {
+			t.Errorf("POST /contacts id=%s 应返回 404，实际 %d：%s", id, code, body)
+		}
+	}
+}

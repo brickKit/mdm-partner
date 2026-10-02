@@ -19,6 +19,8 @@ func ToStatus(err error) error {
 	switch {
 	case errors.Is(err, repo.ErrVersionConflict):
 		return status.Error(codes.Aborted, err.Error())
+	case errors.Is(err, repo.ErrCodeTaken):
+		return status.Error(codes.AlreadyExists, err.Error())
 	case errors.Is(err, repo.ErrNotFound):
 		return status.Error(codes.NotFound, err.Error())
 	case errors.Is(err, ErrInvalidArgument), errors.Is(err, repo.ErrInvalidCursor):

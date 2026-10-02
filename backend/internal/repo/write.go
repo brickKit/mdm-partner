@@ -99,7 +99,7 @@ func (r *Repo) Create(ctx context.Context, in CreateInput) (*Customer, error) {
 
 		c, err := insertCustomer(ctx, tx, in)
 		if err != nil {
-			return err
+			return classifyWriteErr(err)
 		}
 		if err := recordIdempotency(ctx, tx, in.IdempotencyKey, "Create", c.ID); err != nil {
 			return err
@@ -185,7 +185,7 @@ func (r *Repo) Update(ctx context.Context, in UpdateInput) (*Customer, error) {
 	if creditLimit == "" {
 		creditLimit = "0"
 	}
-	return r.updateWithVersion(ctx, in.IdempotencyKey, "Update", `
+	return r.updateWithVersion(ctx, in.IdempotencyKey, "Update", in.ID, `
 		UPDATE customers
 		SET name = $1, tax_no = $2, credit_limit = $3, version = version + 1, updated_at = now()
 		WHERE id = $4 AND version = $5
@@ -209,7 +209,7 @@ type SetStatusInput struct {
 // mdm.customer.updated.v1——事件契约里没有 "enabled" 这个 subject，updated
 // 的 payload 本来就带 status，新增 subject 要先改契约。
 func (r *Repo) SetStatus(ctx context.Context, in SetStatusInput) (*Customer, error) {
-	return r.updateWithVersion(ctx, in.IdempotencyKey, "SetStatus", `
+	return r.updateWithVersion(ctx, in.IdempotencyKey, "SetStatus", in.ID, `
 		UPDATE customers
 		SET status = $1, version = version + 1, updated_at = now()
 		WHERE id = $2 AND version = $3
@@ -224,8 +224,9 @@ func (r *Repo) SetStatus(ctx context.Context, in SetStatusInput) (*Customer, err
 }
 
 // updateWithVersion 是 Update 与 SetStatus 共用的事务：带乐观锁的 UPDATE
-// （WHERE version = 请求值，没有行被改就是版本冲突）+ 幂等键 + 事件。
-func (r *Repo) updateWithVersion(ctx context.Context, key, command, query string, args []any,
+// （WHERE version = 请求值）+ 幂等键 + 事件。没有行被改时再查一次客户在不在：
+// 不在是 ErrNotFound（404），在才是版本冲突（409）。不是数字的 id 直接 ErrNotFound。
+func (r *Repo) updateWithVersion(ctx context.Context, key, command, id, query string, args []any,
 	subjectOf func(*Customer) string) (*Customer, error) {
 	var out *Customer
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
@@ -233,9 +234,12 @@ func (r *Repo) updateWithVersion(ctx context.Context, key, command, query string
 			out = c
 			return err
 		}
+		if !isNumericID(id) {
+			return ErrNotFound
+		}
 		c, err := scanCustomerRow(tx.QueryRowContext(ctx, query, args...))
 		if err == sql.ErrNoRows {
-			return ErrVersionConflict
+			return missingOrConflict(ctx, tx, id)
 		}
 		if err != nil {
 			return fmt.Errorf("update customers: %w", err)
@@ -250,6 +254,18 @@ func (r *Repo) updateWithVersion(ctx context.Context, key, command, query string
 		return nil
 	})
 	return out, err
+}
+
+// missingOrConflict 区分带 version 的 UPDATE 没命中的两种原因。
+func missingOrConflict(ctx context.Context, tx *sql.Tx, id string) error {
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM customers WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("查 customers: %w", err)
+	}
+	if !exists {
+		return ErrNotFound
+	}
+	return ErrVersionConflict
 }
 
 // AddContactInput 对应 AddContactRequest。
@@ -276,6 +292,9 @@ func (r *Repo) AddContact(ctx context.Context, in AddContactInput) (*Contact, er
 			return err
 		}
 
+		if !isNumericID(in.CustomerID) {
+			return ErrNotFound
+		}
 		var id int64
 		if err := tx.QueryRowContext(ctx, `
 			INSERT INTO contacts (customer_id, name, phone, email, is_primary)
@@ -283,7 +302,7 @@ func (r *Repo) AddContact(ctx context.Context, in AddContactInput) (*Contact, er
 			RETURNING id`,
 			in.CustomerID, in.Name, in.Phone, in.Email, in.Primary,
 		).Scan(&id); err != nil {
-			return fmt.Errorf("insert contacts: %w", err)
+			return classifyWriteErr(fmt.Errorf("insert contacts: %w", err))
 		}
 		idStr := strconv.FormatInt(id, 10)
 		if err := recordIdempotency(ctx, tx, in.IdempotencyKey, "AddContact", idStr); err != nil {

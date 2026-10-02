@@ -98,3 +98,29 @@ func TestCreditLimit_gRPC的NaN_Inf_科学计数法等写法是InvalidArgument(t
 		t.Fatalf("被拒绝的 Update 不该改库，期望 100.00 / version %d，实际 %s / %d", base.Version, got.CreditLimit, got.Version)
 	}
 }
+
+// TestCreate_gRPC重复code是AlreadyExists_不存在的客户是NotFound：别的组件据状态码
+// 区分"编号被占"（AlreadyExists）、"客户不存在"（NotFound）与"版本过期"（Aborted）。
+func TestCreate_gRPC重复code是AlreadyExists_不存在的客户是NotFound(t *testing.T) {
+	cli, r := testClient(t)
+	ctx := context.Background()
+
+	taken := runKey("C-GRPC-DUP")
+	c, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: runKey("grpc-dup-first"), Code: taken, Name: "先来的客户"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = cli.Create(ctx, &customerv1.CreateRequest{IdempotencyKey: runKey("grpc-dup-second"), Code: taken, Name: "后来的客户"})
+	if got := status.Code(err); got != codes.AlreadyExists {
+		t.Errorf("重复 code 应该是 AlreadyExists，实际 %v（%v）", got, err)
+	}
+
+	_, err = cli.Update(ctx, &customerv1.UpdateRequest{IdempotencyKey: runKey("grpc-404-upd"), Id: "999999999", Version: 1, Name: "x"})
+	if got := status.Code(err); got != codes.NotFound {
+		t.Errorf("Update 不存在的客户应该是 NotFound，实际 %v（%v）", got, err)
+	}
+	_, err = cli.Update(ctx, &customerv1.UpdateRequest{IdempotencyKey: runKey("grpc-stale-upd"), Id: c.ID, Version: c.Version + 1, Name: "x"})
+	if got := status.Code(err); got != codes.Aborted {
+		t.Errorf("Update 带过期 version 应该是 Aborted，实际 %v（%v）", got, err)
+	}
+}

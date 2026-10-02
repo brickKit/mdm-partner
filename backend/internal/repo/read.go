@@ -14,11 +14,18 @@ import (
 // BatchGet 按 id 批量取客户，缺失的 id 进 missing、不报错。这是别的组件
 // 防 N+1 的读法（一个列表页里的 N 个客户一次取回），只走 gRPC。热表 /
 // 归档表的路由交给 besdk.BatchGetRouted：本组件不归档，归档 schema 里没有
-// customers 表，SDK 查不到表时只用热表的结果。
+// customers 表，SDK 查不到表时只用热表的结果。不是数字的 id 不进查询，直接
+// 算缺失。
 func (r *Repo) BatchGet(ctx context.Context, ids []string) (found []*Customer, missing []string, err error) {
+	query := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if isNumericID(id) {
+			query = append(query, id)
+		}
+	}
 	var rows []*Customer
 	err = besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		got, err := besdk.BatchGetRouted(ctx, tx, r.schema, "customers", ids, scanCustomer)
+		got, err := besdk.BatchGetRouted(ctx, tx, r.schema, "customers", query, scanCustomer)
 		if err != nil {
 			return err
 		}
