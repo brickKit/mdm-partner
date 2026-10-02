@@ -38,7 +38,6 @@
 # 测试连测试库 brickkit_test_db，绝不连 brickkit_db；
 # 项目根 make test-db-init ID=mdm/customer 刷新它，并把本组件的迁移连跑两次
 export TEST_PG_DSN="postgres://postgres:<密码>@localhost:5432/brickkit_test_db?sslmode=disable"
-export TEST_NATS_URL="nats://localhost:4222"
 make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接失败
 go test ./... -count=1 -v | grep -c -- '--- SKIP'   # 0：没有测试被跳过
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
@@ -72,6 +71,7 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer
 | 对原始输入用 `LIKE` / `ILIKE` 搜索 | `q=%` 返回全部客户 | `strpos` / `starts_with` 把 `%` 与 `_` 当字面字符 |
 | 用 `strconv.ParseFloat` 校验 `credit_limit` | `"NaN"`、`"Inf"`、`"1e3"` 都能过；NaN 被存下、排在所有数之上，再随事件流进 `erp/sales` 与 `erp/finance`，拿它做的信用检查全部通过 | `validateCreditLimit` 按 `NUMERIC(18,2)` 的形状匹配字符串，从不转浮点 |
 | 把调用方错误（`4xx`）记成 ERROR | 外壳与运维看的 ERROR 行被重复 code、过期 version 淹没 | `logFailure` 只对映射成 `Internal` 的错误记 ERROR；取消记 Warn |
+| 调用方没传 code 时，把撞 `customers_code_uniq` 归成 `ErrCodeTaken` | 不带 code 的 Create 答 `409`"code 已被占用"、只记 Info；没人知道显式 code 占了序列要发的编号区 | 自动编号与显式 code 共用一个编号空间。`insertAutoCode` 用 `ON CONFLICT (code) DO NOTHING` 插入并顺延到下一个序列值，最多 `autoCodeAttempts`（5）次，之后以 `Internal` 失败；`Create` 只在 `in.Code != ""` 时归类 |
 
 ## 改代码前自查
 

@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
-	"time"
+	"strings"
 
 	besdk "github.com/brickKit/be-sdk-go"
 )
@@ -99,7 +99,12 @@ func (r *Repo) Create(ctx context.Context, in CreateInput) (*Customer, error) {
 
 		c, err := insertCustomer(ctx, tx, in)
 		if err != nil {
-			return classifyWriteErr(err)
+			// 只有调用方自己传了 code，撞唯一索引才是它的错（409）；自动编号的撞车
+			// 在 insertAutoCode 里顺延，顺延耗尽是服务端故障（Internal），不翻译。
+			if in.Code != "" {
+				return classifyWriteErr(err)
+			}
+			return err
 		}
 		if err := recordIdempotency(ctx, tx, in.IdempotencyKey, "Create", c.ID); err != nil {
 			return err
@@ -127,46 +132,70 @@ func (r *Repo) Create(ctx context.Context, in CreateInput) (*Customer, error) {
 // 会把 "0" 规整成 "0.00"，回填原文会让 Create 的返回值与随后 Get 同一条
 // 记录读到的格式不一致。
 func insertCustomer(ctx context.Context, tx *sql.Tx, in CreateInput) (*Customer, error) {
-	creditLimit := in.CreditLimit
-	if creditLimit == "" {
-		creditLimit = "0"
+	c := &Customer{Code: in.Code, Name: in.Name, TaxNo: in.TaxNo, CreditLimit: in.CreditLimit, Status: "ACTIVE"}
+	if c.CreditLimit == "" {
+		c.CreditLimit = "0"
 	}
-	var id int64
-	code := in.Code
-	var createdAt, updatedAt time.Time
-	var version int64
-
-	if code == "" {
-		// 自动编号：一次 nextval 同时决定 id 与 code，插入时显式给 id，
-		// 不必插入之后再回改 code。
-		if err := tx.QueryRowContext(ctx, `SELECT nextval('customers_id_seq')`).Scan(&id); err != nil {
-			return nil, fmt.Errorf("生成客户编号: %w", err)
+	if c.Code == "" {
+		if err := insertAutoCode(ctx, tx, c); err != nil {
+			return nil, err
 		}
-		code = fmt.Sprintf("C%06d", id)
-		if err := tx.QueryRowContext(ctx, `
+		return c, nil
+	}
+	// 显式编号：重复时由唯一索引 customers_code_uniq 报错，Create 把它翻成 ErrCodeTaken。
+	var id int64
+	if err := tx.QueryRowContext(ctx, `
+		INSERT INTO customers (code, name, tax_no, credit_limit)
+		VALUES ($1, $2, $3, $4)
+		RETURNING id, created_at, updated_at, version, credit_limit`,
+		c.Code, c.Name, c.TaxNo, c.CreditLimit,
+	).Scan(&id, &c.CreatedAt, &c.UpdatedAt, &c.Version, &c.CreditLimit); err != nil {
+		return nil, fmt.Errorf("insert customers: %w", err)
+	}
+	c.ID = strconv.FormatInt(id, 10)
+	return c, nil
+}
+
+// autoCodeAttempts 是自动编号撞车时最多试几个序列值。撞车只在显式 code 占了序列将来
+// 要发的值时发生，正常一次就成；连续 5 个都被占，说明有人成片导入了自动编号形状的
+// code，再顺延下去只是在扫别人的编号区，交给运维（Internal + ERROR）。
+const autoCodeAttempts = 5
+
+// insertAutoCode 是不带 code 的 Create：一次 nextval 同时决定 id 与 code（"C" + 6 位），
+// 插入时显式给 id，不必插入之后再回改 code。成功时填好 c 的 ID、Code 与落库后的列。
+//
+// 自动编号与显式 code 共用一个编号空间：显式 code 可以是 "C000123" 这种形状（从旧系统
+// 导入、重新导入本系统导出的编号），序列走到这个值时就撞上 customers_code_uniq。这是
+// 服务端的编号撞车，不是调用方的错——调用方没传 code，不能答 409 "code 已被占用"。所以
+// 用 ON CONFLICT (code) DO NOTHING：撞车时一行不插、事务不进入出错状态（不用保存点），
+// 取下一个序列值再试；序列不随事务回滚，跳过的值不会再发。
+func insertAutoCode(ctx context.Context, tx *sql.Tx, c *Customer) error {
+	tried := make([]string, 0, autoCodeAttempts)
+	for attempt := 0; attempt < autoCodeAttempts; attempt++ {
+		var id int64
+		if err := tx.QueryRowContext(ctx, `SELECT nextval('customers_id_seq')`).Scan(&id); err != nil {
+			return fmt.Errorf("生成客户编号: %w", err)
+		}
+		code := fmt.Sprintf("C%06d", id)
+		err := tx.QueryRowContext(ctx, `
 			INSERT INTO customers (id, code, name, tax_no, credit_limit)
 			VALUES ($1, $2, $3, $4, $5)
+			ON CONFLICT (code) DO NOTHING
 			RETURNING created_at, updated_at, version, credit_limit`,
-			id, code, in.Name, in.TaxNo, creditLimit,
-		).Scan(&createdAt, &updatedAt, &version, &creditLimit); err != nil {
-			return nil, fmt.Errorf("insert customers: %w", err)
-		}
-	} else {
-		// 显式编号：重复时由唯一索引 customers_code_uniq 报错。
-		if err := tx.QueryRowContext(ctx, `
-			INSERT INTO customers (code, name, tax_no, credit_limit)
-			VALUES ($1, $2, $3, $4)
-			RETURNING id, created_at, updated_at, version, credit_limit`,
-			code, in.Name, in.TaxNo, creditLimit,
-		).Scan(&id, &createdAt, &updatedAt, &version, &creditLimit); err != nil {
-			return nil, fmt.Errorf("insert customers: %w", err)
+			id, code, c.Name, c.TaxNo, c.CreditLimit,
+		).Scan(&c.CreatedAt, &c.UpdatedAt, &c.Version, &c.CreditLimit)
+		switch {
+		case err == nil:
+			c.ID, c.Code = strconv.FormatInt(id, 10), code
+			return nil
+		case err == sql.ErrNoRows: // 这个编号已被显式 code 占用
+			tried = append(tried, code)
+		default:
+			return fmt.Errorf("insert customers: %w", err)
 		}
 	}
-	return &Customer{
-		ID: strconv.FormatInt(id, 10), Code: code, Name: in.Name, TaxNo: in.TaxNo,
-		CreditLimit: creditLimit, Status: "ACTIVE", Version: version,
-		CreatedAt: createdAt, UpdatedAt: updatedAt,
-	}, nil
+	return fmt.Errorf("自动编号连续 %d 次撞上已被显式占用的 code（%s）：显式 code 占了序列将来要发的编号区，需要运维处理",
+		autoCodeAttempts, strings.Join(tried, "、"))
 }
 
 // UpdateInput 对应 UpdateRequest。

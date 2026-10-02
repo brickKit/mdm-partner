@@ -38,7 +38,6 @@ The AI guide to developing this component. How to use it, its boundaries and con
 # tests run against the test database brickkit_test_db, never brickkit_db;
 # at the project root, make test-db-init ID=mdm/customer refreshes it and runs this component's migrations twice
 export TEST_PG_DSN="postgres://postgres:<password>@localhost:5432/brickkit_test_db?sslmode=disable"
-export TEST_NATS_URL="nats://localhost:4222"
 make test                    # every package ends in "ok"; refuses to run without TEST_PG_DSN
 go test ./... -count=1 -v | grep -c -- '--- SKIP'   # 0: no test skipped
 make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
@@ -72,6 +71,7 @@ After `buf generate` (contracts changed), the contract package needs a new tag: 
 | Search with `LIKE` / `ILIKE` on the raw input | `q=%` returns every customer | `strpos` / `starts_with` treat `%` and `_` literally |
 | Validate `credit_limit` with `strconv.ParseFloat` | `"NaN"`, `"Inf"`, `"1e3"` pass; NaN is stored, ranks above every number, and flows to `erp/sales` and `erp/finance` through the events, where every credit check against it passes | `validateCreditLimit` matches the string against `NUMERIC(18,2)`'s shape and never converts to a float |
 | Log a caller error (`4xx`) at ERROR | The shell's and the operator's ERROR lines fill with duplicate codes and stale versions | `logFailure` keeps ERROR for errors that map to `Internal`; cancels are Warn |
+| Classify a `customers_code_uniq` violation as `ErrCodeTaken` when the caller sent no code | A Create without a code answers `409` "code already taken" and is logged at Info; nobody learns that explicit codes occupy the range the sequence hands out | Generated and explicit codes share one namespace. `insertAutoCode` inserts with `ON CONFLICT (code) DO NOTHING` and moves to the next sequence value, up to `autoCodeAttempts` (5), then fails as `Internal`; `Create` classifies only when `in.Code != ""` |
 
 ## Before changing code
 

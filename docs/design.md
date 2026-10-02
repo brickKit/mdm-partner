@@ -28,6 +28,8 @@ Deleting a customer is disabling it (`POST /customers/{id}/status`); there is no
 
 There is no terminal state: `DISABLED` means "not usable for new business", and a customer can be re-enabled. `code` is generated as `C` + six digits from the ID sequence when the caller leaves it empty, and taken as given otherwise (imports, migrations from another system).
 
+Generated and explicit codes share one namespace, because an explicit code may itself look like `C000123` (an import from an older system, or a re-import of codes this component generated). When the sequence reaches a value an explicit code already holds, the insert would hit `customers_code_uniq`. That is a numbering collision on the server's side, not the caller's mistake: the caller sent no code, so answering `409` "code already taken" would be wrong. The generated-code insert therefore uses `ON CONFLICT (code) DO NOTHING`, which leaves the transaction usable, and moves on to the next sequence value, up to 5 attempts in the same request. Skipped values are never handed out again, since a sequence does not roll back. If all 5 are taken, someone has imported a run of generated-shape codes, and the request fails with `500` / `INTERNAL`, logged at ERROR, because an operator has to look at it. Only a code the caller sent is classified as `409` / `ALREADY_EXISTS`. Rejecting explicit codes of the generated shape would remove the collision altogether, but it is a contract change and is not done.
+
 ## Contract surface
 
 gRPC `mdm.customer.v1.CustomerService`, for other components:
