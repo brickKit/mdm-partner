@@ -4,9 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -31,13 +33,21 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
+var keySeq int64
+
+// runKey 返回本次运行独有的幂等键 / 客户编号。测试库跨运行保留数据：固定的
+// 幂等键从第二次运行起命中回放，写路径根本不执行；固定的 code 会撞唯一索引。
+func runKey(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), atomic.AddInt64(&keySeq, 1))
+}
+
 // code 留空时自动生成 "C" + 6 位数字；显式传入时按传入的用（导入场景）。
 func TestCreate_code留空时自动生成(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
-	c, err := r.Create(ctx, CreateInput{IdempotencyKey: "test-autocode-001", Name: "自动编号客户"})
+	c, err := r.Create(ctx, CreateInput{IdempotencyKey: runKey("test-autocode"), Name: "自动编号客户"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +64,7 @@ func TestCreate_幂等(t *testing.T) {
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
-	in := CreateInput{IdempotencyKey: "test-idem-001", Code: "C-001",
+	in := CreateInput{IdempotencyKey: runKey("test-idem"), Code: runKey("C-IDEM"),
 		Name: "Acme", CreditLimit: "100000.00"}
 	a, err := r.Create(ctx, in)
 	if err != nil {
@@ -83,8 +93,9 @@ func TestCreate_事件与业务数据同事务(t *testing.T) {
 	testHookAfterOutbox = func() error { return errors.New("注入的失败，验证回滚") }
 	t.Cleanup(func() { testHookAfterOutbox = nil })
 
+	code := runKey("C-ROLLBACK")
 	_, err := r.Create(ctx, CreateInput{
-		IdempotencyKey: "test-rollback-001", Code: "C-ROLLBACK", Name: "Rollback"})
+		IdempotencyKey: runKey("test-rollback"), Code: code, Name: "Rollback"})
 	if err == nil {
 		t.Fatal("期望注入的失败被返回")
 	}
@@ -95,7 +106,7 @@ func TestCreate_事件与业务数据同事务(t *testing.T) {
 			return tx.QueryRow(
 				`SELECT count(*) FROM event_outbox WHERE aggregate_id IN
 					(SELECT id::text FROM customers WHERE code = $1)`,
-				"C-ROLLBACK").Scan(&n)
+				code).Scan(&n)
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +118,7 @@ func TestCreate_事件与业务数据同事务(t *testing.T) {
 	if err := besdk.WithTx(ctx, db, "mdm_customer_rw", "mdm_customer",
 		func(tx *sql.Tx) error {
 			return tx.QueryRow(
-				`SELECT count(*) FROM customers WHERE code = $1`, "C-ROLLBACK").Scan(&m)
+				`SELECT count(*) FROM customers WHERE code = $1`, code).Scan(&m)
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -124,13 +135,14 @@ func TestAddContact_customer_id按字符串传也能正常插入(t *testing.T) {
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
-	c, err := r.Create(ctx, CreateInput{IdempotencyKey: "test-contact-cust-001", Name: "联系人测试客户"})
+	c, err := r.Create(ctx, CreateInput{IdempotencyKey: runKey("test-contact-cust"), Name: "联系人测试客户"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
+	contactKey := runKey("test-contact")
 	contact, err := r.AddContact(ctx, AddContactInput{
-		IdempotencyKey: "test-contact-001", CustomerID: c.ID,
+		IdempotencyKey: contactKey, CustomerID: c.ID,
 		Name: "张三", Phone: "13800000000", Primary: true,
 	})
 	if err != nil {
@@ -142,7 +154,7 @@ func TestAddContact_customer_id按字符串传也能正常插入(t *testing.T) {
 
 	// 幂等：同一个 idempotency_key 再来一次，不许新建
 	again, err := r.AddContact(ctx, AddContactInput{
-		IdempotencyKey: "test-contact-001", CustomerID: c.ID,
+		IdempotencyKey: contactKey, CustomerID: c.ID,
 		Name: "张三", Phone: "13800000000", Primary: true,
 	})
 	if err != nil {
@@ -188,7 +200,7 @@ func TestList_最后一页返回空nextCursor而不是报错(t *testing.T) {
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
-	c, err := r.Create(ctx, CreateInput{IdempotencyKey: "test-lastpage-001", Name: "分页边界测试"})
+	c, err := r.Create(ctx, CreateInput{IdempotencyKey: runKey("test-lastpage"), Name: "分页边界测试"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,8 +226,9 @@ func TestCreate_creditLimit超出精度时报错且不落库(t *testing.T) {
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
+	code := runKey("C-PRECISION")
 	_, err := r.Create(ctx, CreateInput{
-		IdempotencyKey: "test-precision-001", Code: "C-PRECISION",
+		IdempotencyKey: runKey("test-precision"), Code: code,
 		Name: "精度溢出测试", CreditLimit: "999999999999999999.99", // 17 位整数，超出 NUMERIC(18,2)
 	})
 	if err == nil {
@@ -225,7 +238,7 @@ func TestCreate_creditLimit超出精度时报错且不落库(t *testing.T) {
 	var n int
 	if err := besdk.WithTx(ctx, db, "mdm_customer_rw", "mdm_customer",
 		func(tx *sql.Tx) error {
-			return tx.QueryRow(`SELECT count(*) FROM customers WHERE code = $1`, "C-PRECISION").Scan(&n)
+			return tx.QueryRow(`SELECT count(*) FROM customers WHERE code = $1`, code).Scan(&n)
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +258,7 @@ func TestCreate_并发相同idempotencyKey只落一条(t *testing.T) {
 	ctx := context.Background()
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 
-	const key = "test-concurrent-idem-001"
+	key := runKey("test-concurrent-idem")
 	const n = 8
 	var wg sync.WaitGroup
 	oks := make([]bool, n)

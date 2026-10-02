@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,6 +37,14 @@ func testRepo(t *testing.T) (*repo.Repo, *sql.DB) {
 	}
 	t.Cleanup(func() { db.Close() })
 	return repo.New(db, "mdm_customer_rw", "mdm_customer"), db
+}
+
+var keySeq int64
+
+// runKey 返回本次运行独有的幂等键 / 客户编号。测试库跨运行保留数据：固定的
+// 幂等键从第二次运行起命中回放，写路径根本不执行；固定的 code 会撞唯一索引。
+func runKey(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), atomic.AddInt64(&keySeq, 1))
 }
 
 type listBody struct {
@@ -68,7 +77,7 @@ func TestList_REST按created_after放宽默认时间窗口(t *testing.T) {
 	ctx := context.Background()
 	svc := service.New(r, slog.Default())
 
-	c, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: "http-window-001", Code: "C-HTTP-WINDOW", Name: "老客户"})
+	c, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: runKey("http-window"), Code: runKey("C-HTTP-WINDOW"), Name: "老客户"})
 	if err != nil {
 		t.Fatal(err)
 	}

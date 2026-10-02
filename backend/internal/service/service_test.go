@@ -4,9 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
@@ -29,6 +32,14 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
+var keySeq int64
+
+// runKey 返回本次运行独有的幂等键 / 客户编号。测试库跨运行保留数据：固定的
+// 幂等键从第二次运行起命中回放，写路径根本不执行；固定的 code 会撞唯一索引。
+func runKey(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), atomic.AddInt64(&keySeq, 1))
+}
+
 func newTestService(t *testing.T) (*Service, *repo.Repo, *sql.DB) {
 	t.Helper()
 	db := testDB(t)
@@ -41,14 +52,14 @@ func TestUpdate_版本不一致时拒绝(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := r.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-update-001", Code: "C-SVC-UPDATE", Name: "旧名字"})
+		IdempotencyKey: runKey("svc-update"), Code: runKey("C-SVC-UPDATE"), Name: "旧名字"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// 乐观锁：version 与库里不一致则拒绝，不许写穿
 	_, err = svc.Update(ctx, UpdateInput{
-		IdempotencyKey: "svc-update-002", ID: c.ID, Version: c.Version + 1, Name: "新名字"})
+		IdempotencyKey: runKey("svc-update"), ID: c.ID, Version: c.Version + 1, Name: "新名字"})
 	if err == nil {
 		t.Fatal("version 不一致时应该拒绝，实际没报错")
 	}
@@ -69,19 +80,19 @@ func TestSetStatus_两个方向都允许流转(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := r.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-status-001", Code: "C-SVC-STATUS", Name: "状态流转测试"})
+		IdempotencyKey: runKey("svc-status"), Code: runKey("C-SVC-STATUS"), Name: "状态流转测试"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	disabled, err := svc.SetStatus(ctx, SetStatusInput{
-		IdempotencyKey: "svc-status-002", ID: c.ID, Version: c.Version, Status: "DISABLED"})
+		IdempotencyKey: runKey("svc-status"), ID: c.ID, Version: c.Version, Status: "DISABLED"})
 	if err != nil {
 		t.Fatalf("ACTIVE → DISABLED 应该允许：%v", err)
 	}
 
 	reactivated, err := svc.SetStatus(ctx, SetStatusInput{
-		IdempotencyKey: "svc-status-003", ID: c.ID, Version: disabled.Version, Status: "ACTIVE"})
+		IdempotencyKey: runKey("svc-status"), ID: c.ID, Version: disabled.Version, Status: "ACTIVE"})
 	if err != nil {
 		t.Fatalf("DISABLED → ACTIVE 应该允许（不是终态），实际报错：%v", err)
 	}
@@ -95,12 +106,12 @@ func TestSetStatus_停用时发出disabled事件(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := r.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-event-001", Code: "C-SVC-EVENT", Name: "事件测试"})
+		IdempotencyKey: runKey("svc-event"), Code: runKey("C-SVC-EVENT"), Name: "事件测试"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	updated, err := svc.SetStatus(ctx, SetStatusInput{
-		IdempotencyKey: "svc-event-002", ID: c.ID, Version: c.Version, Status: "DISABLED"})
+		IdempotencyKey: runKey("svc-event"), ID: c.ID, Version: c.Version, Status: "DISABLED"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,17 +140,17 @@ func TestSetStatus_重新启用时发出updated事件而不是专门事件(t *te
 	ctx := context.Background()
 
 	c, err := r.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-reenable-001", Code: "C-SVC-REENABLE", Name: "重新启用测试"})
+		IdempotencyKey: runKey("svc-reenable"), Code: runKey("C-SVC-REENABLE"), Name: "重新启用测试"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	disabled, err := svc.SetStatus(ctx, SetStatusInput{
-		IdempotencyKey: "svc-reenable-002", ID: c.ID, Version: c.Version, Status: "DISABLED"})
+		IdempotencyKey: runKey("svc-reenable"), ID: c.ID, Version: c.Version, Status: "DISABLED"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	reactivated, err := svc.SetStatus(ctx, SetStatusInput{
-		IdempotencyKey: "svc-reenable-003", ID: c.ID, Version: disabled.Version, Status: "ACTIVE"})
+		IdempotencyKey: runKey("svc-reenable"), ID: c.ID, Version: disabled.Version, Status: "ACTIVE"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -165,8 +176,9 @@ func TestCreate_name为空时拒绝且不落库(t *testing.T) {
 	svc, _, db := newTestService(t)
 	ctx := context.Background()
 
+	code := runKey("C-L3-NAME-EMPTY")
 	_, err := svc.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-l3-name-empty", Code: "C-L3-NAME-EMPTY", Name: ""})
+		IdempotencyKey: runKey("svc-l3-name-empty"), Code: code, Name: ""})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("name 为空应该拒绝并返回 ErrInvalidArgument，实际：%v", err)
 	}
@@ -174,7 +186,7 @@ func TestCreate_name为空时拒绝且不落库(t *testing.T) {
 	var n int
 	if err := besdk.WithTx(ctx, db, "mdm_customer_rw", "mdm_customer",
 		func(tx *sql.Tx) error {
-			return tx.QueryRow(`SELECT count(*) FROM customers WHERE code = $1`, "C-L3-NAME-EMPTY").Scan(&n)
+			return tx.QueryRow(`SELECT count(*) FROM customers WHERE code = $1`, code).Scan(&n)
 		}); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +200,7 @@ func TestCreate_creditLimit为负数时拒绝(t *testing.T) {
 	ctx := context.Background()
 
 	_, err := svc.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-l3-credit-neg", Code: "C-L3-CREDIT-NEG", Name: "负数额度测试", CreditLimit: "-1"})
+		IdempotencyKey: runKey("svc-l3-credit-neg"), Code: runKey("C-L3-CREDIT-NEG"), Name: "负数额度测试", CreditLimit: "-1"})
 	if !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("credit_limit 为负数应该拒绝并返回 ErrInvalidArgument，实际：%v", err)
 	}
@@ -202,7 +214,7 @@ func TestCreate_creditLimit为0时允许(t *testing.T) {
 	ctx := context.Background()
 
 	c, err := svc.Create(ctx, repo.CreateInput{
-		IdempotencyKey: "svc-l3-credit-zero", Code: "C-L3-CREDIT-ZERO", Name: "零额度测试", CreditLimit: "0"})
+		IdempotencyKey: runKey("svc-l3-credit-zero"), Code: runKey("C-L3-CREDIT-ZERO"), Name: "零额度测试", CreditLimit: "0"})
 	if err != nil {
 		t.Fatalf("credit_limit 为 0 应该允许，实际报错：%v", err)
 	}
