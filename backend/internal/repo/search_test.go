@@ -2,10 +2,13 @@ package repo
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
+
+	besdk "github.com/brickKit/be-sdk-go"
 )
 
 // 关键字搜索 q 的规则（REST GET /customers?q=）：匹配 code 或 name，大小写
@@ -13,7 +16,7 @@ import (
 // 内按建档时间倒序；空 q（含全空白）等于不过滤；仍然按游标翻页。
 //
 // 测试库会被别的测试与别的包并发写入，所以每条测试用一个本次运行独有的
-// 关键字 token，只断言带 token 的那几行。
+// 关键字 token，只断言带 token 的那几行（空 q 那一条另用独占的时间窗口，见它的注释）。
 
 func searchToken() string {
 	return fmt.Sprintf("zq%x", time.Now().UnixNano())
@@ -76,18 +79,41 @@ func TestList_q大小写不敏感(t *testing.T) {
 	}
 }
 
+// backdate 把这几个客户的建档时间挪到同一个时刻 at，给只看 at 附近的窗口用。
+func backdate(t *testing.T, db *sql.DB, at time.Time, ids ...string) {
+	t.Helper()
+	if err := besdk.WithTx(context.Background(), db, "mdm_customer_rw", "mdm_customer", func(tx *sql.Tx) error {
+		for _, id := range ids {
+			if _, err := tx.Exec(`UPDATE customers SET created_at = $1 WHERE id = $2`, at, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// 空 q 与"不过滤"要比较整页结果，不能只看带 token 的行；而别的包同时在往测试库里写
+// 客户，"最近一秒"的窗口里随时会多出别人的行，两次查询之间一插入就对不上。所以把本
+// 测试的客户挪到十年前、精确到微秒的一个时刻，窗口只取这一刻前后 1 毫秒：窗口里只有
+// 本测试的行。
 func TestList_q为空等于不过滤(t *testing.T) {
 	db := testDB(t)
 	r := New(db, "mdm_customer_rw", "mdm_customer")
 	tok := searchToken()
-	start := time.Now().Add(-time.Second)
 	unrelated := mk(t, r, tok+"-a", "", "不含关键字的客户")
-	end := time.Now().Add(time.Second)
+	matching := mk(t, r, tok+"-b", "", tok+"公司")
+	at := time.Now().AddDate(-10, 0, 0).Truncate(time.Microsecond)
+	backdate(t, db, at, unrelated.ID, matching.ID)
 
-	base := ListInput{PageSize: 200, CreatedAfter: start, CreatedBefore: end}
+	base := ListInput{PageSize: 200, CreatedAfter: at.Add(-time.Millisecond), CreatedBefore: at.Add(time.Millisecond)}
 	plain, err := r.List(context.Background(), base)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(plain.Customers) != 2 {
+		t.Fatalf("窗口里应只有本测试的 2 个客户，实际 %d 个：%v", len(plain.Customers), ids(plain.Customers))
 	}
 	for _, q := range []string{"", "   "} {
 		in := base
