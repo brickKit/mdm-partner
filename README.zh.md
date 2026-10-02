@@ -7,7 +7,7 @@
 ## 在项目里使用
 
 ```bash
-brickkit add mdm/customer@2.0.0
+brickkit add mdm/customer@2.0.1
 brickkit up
 ```
 

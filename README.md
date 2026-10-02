@@ -7,7 +7,7 @@ Customer names, tax IDs, credit limits, status, contacts and billing details.
 ## Use it in a project
 
 ```bash
-brickkit add mdm/customer@2.0.0
+brickkit add mdm/customer@2.0.1
 brickkit up
 ```
 

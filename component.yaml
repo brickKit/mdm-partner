@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: mdm/customer
   name: Customer master data
-  version: 2.0.0
+  version: 2.0.1
   description: Customer names, tax IDs, credit limits, status, contacts and billing details.
   repository: https://github.com/brickKit/mdm-customer
   license: Apache-2.0
