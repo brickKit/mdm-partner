@@ -35,16 +35,17 @@ The AI guide to developing this component. How to use it, its boundaries and con
 ## Build and test
 
 ```bash
-# tests run against the test database brickkit_test_db, never brickkit_db (make test-db-init at the project root)
-set -a; . ../../../.env; set +a
-export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
+# tests run against the test database brickkit_test_db, never brickkit_db;
+# at the project root, make test-db-init ID=mdm/customer refreshes it and runs this component's migrations twice
+export TEST_PG_DSN="postgres://postgres:<password>@localhost:5432/brickkit_test_db?sslmode=disable"
+export TEST_NATS_URL="nats://localhost:4222"
 make test                    # every package ends in "ok"; refuses to run without TEST_PG_DSN
 go test ./... -count=1 -v | grep -c -- '--- SKIP'   # 0: no test skipped
 make check-version dag-check contract-check import-scan module-check   # each prints one ✓ line
 make docs-check              # "0 with errors, 0 warnings"
 # migrations, as the login role:
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer_rw \
-  PG_PASSWORD="$MDM_CUSTOMER_DB_PASSWORD" PG_SCHEMA=mdm_customer make migrate-idempotent   # ✓ 迁移幂等
+  PG_PASSWORD=<its password> PG_SCHEMA=mdm_customer make migrate-idempotent   # ✓ 迁移幂等
 ```
 
 After `buf generate` (contracts changed), the contract package needs a new tag: see Pitfalls. On a real machine, from the project root: `make verify ID=mdm/customer ROUTE=/mdm/customer/customers FOCUS=1` builds the image, starts only what this component needs, checks migration, health and the permission check, runs a focus run, and tears down.
@@ -69,6 +70,8 @@ After `buf generate` (contracts changed), the contract package needs a new tag: 
 | Change a comment or option in `contracts/mdm/customer/v1/customer.proto` without tagging the contract package | Builds pass locally (the `replace` hides it); a shell fetching `mdm-customer/v2` compiles against the old `gen/` from the tag `go.mod` requires | Any change under `gen/mdm/customer/` needs a new tag `gen/mdm/customer/v1.x.y` and the root `go.mod` requiring it |
 | Order the list by anything other than `match_rank, created_at DESC, id DESC`, or drop `rank` from the cursor | Paging skips or repeats rows exactly where prefix matches end and contains matches begin | The keyset condition in `listSQL` assumes this order; `TestList_q与游标一起翻页不重不漏` covers it |
 | Search with `LIKE` / `ILIKE` on the raw input | `q=%` returns every customer | `strpos` / `starts_with` treat `%` and `_` literally |
+| Validate `credit_limit` with `strconv.ParseFloat` | `"NaN"`, `"Inf"`, `"1e3"` pass; NaN is stored, ranks above every number, and flows to `erp/sales` and `erp/finance` through the events, where every credit check against it passes | `validateCreditLimit` matches the string against `NUMERIC(18,2)`'s shape and never converts to a float |
+| Log a caller error (`4xx`) at ERROR | The shell's and the operator's ERROR lines fill with duplicate codes and stale versions | `logFailure` keeps ERROR for errors that map to `Internal`; cancels are Warn |
 
 ## Before changing code
 

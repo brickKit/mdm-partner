@@ -35,16 +35,17 @@
 ## 构建与测试
 
 ```bash
-# 测试连测试库 brickkit_test_db，绝不连 brickkit_db（项目根 make test-db-init 准备）
-set -a; . ../../../.env; set +a
-export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
+# 测试连测试库 brickkit_test_db，绝不连 brickkit_db；
+# 项目根 make test-db-init ID=mdm/customer 刷新它，并把本组件的迁移连跑两次
+export TEST_PG_DSN="postgres://postgres:<密码>@localhost:5432/brickkit_test_db?sslmode=disable"
+export TEST_NATS_URL="nats://localhost:4222"
 make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接失败
 go test ./... -count=1 -v | grep -c -- '--- SKIP'   # 0：没有测试被跳过
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
 make docs-check              # "0 with errors, 0 warnings"
 # 迁移，以登录角色运行：
 PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer_rw \
-  PG_PASSWORD="$MDM_CUSTOMER_DB_PASSWORD" PG_SCHEMA=mdm_customer make migrate-idempotent   # ✓ 迁移幂等
+  PG_PASSWORD=<它的密码> PG_SCHEMA=mdm_customer make migrate-idempotent   # ✓ 迁移幂等
 ```
 
 `buf generate` 之后（契约变了），契约包要打新 tag：见易错点。真机在项目根跑 `make verify ID=mdm/customer ROUTE=/mdm/customer/customers FOCUS=1`：构建镜像、只起本组件需要的东西、核对迁移 / 健康 / 权限判定、跑一次 focus、收尾。
@@ -69,6 +70,8 @@ PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer
 | 改了 `contracts/mdm/customer/v1/customer.proto` 的注释或选项，却不给契约包打 tag | 本地全绿（`replace` 掩盖了它）；外壳拉 `mdm-customer/v2` 时对着 `go.mod` require 的那个 tag 里的旧 `gen/` 编译 | `gen/mdm/customer/` 下有任何变化都要打新 tag `gen/mdm/customer/v1.x.y`，根 `go.mod` require 它 |
 | 列表不按 `match_rank, created_at DESC, id DESC` 排序，或游标里丢了档位 | 翻页恰好在"前缀匹配结束、包含匹配开始"的地方漏行或重复 | `listSQL` 的 keyset 条件依赖这个顺序；`TestList_q与游标一起翻页不重不漏` 守着 |
 | 对原始输入用 `LIKE` / `ILIKE` 搜索 | `q=%` 返回全部客户 | `strpos` / `starts_with` 把 `%` 与 `_` 当字面字符 |
+| 用 `strconv.ParseFloat` 校验 `credit_limit` | `"NaN"`、`"Inf"`、`"1e3"` 都能过；NaN 被存下、排在所有数之上，再随事件流进 `erp/sales` 与 `erp/finance`，拿它做的信用检查全部通过 | `validateCreditLimit` 按 `NUMERIC(18,2)` 的形状匹配字符串，从不转浮点 |
+| 把调用方错误（`4xx`）记成 ERROR | 外壳与运维看的 ERROR 行被重复 code、过期 version 淹没 | `logFailure` 只对映射成 `Internal` 的错误记 ERROR；取消记 Warn |
 
 ## 改代码前自查
 

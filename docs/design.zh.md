@@ -43,6 +43,8 @@
 
 `/mdm/customer` 下的 REST，每条路由都带权限键：`GET /customers` 与 `GET /customers/{id}`（`mdm.customer.view`）、`POST /customers`（`mdm.customer.create`）、`PATCH /customers/{id}`（`mdm.customer.update`）、`POST /customers/{id}/status`（`mdm.customer.set_status`）、`POST /customers/{id}/contacts`（`mdm.customer.add_contact`）。`BatchGet` 只在 gRPC 上：没有哪个终端页面会按一串客户 ID 查询，放到公网 API 上只会被当成批量导出用。没有给超时写调用确认结果的状态端点：没有组件在自己的事务里同步写本组件。
 
+REST 与 gRPC 的错误一致（be-sdk-go 把 gRPC 码映射成 HTTP 状态码）。`credit_limit` 按 `NUMERIC(18,2)` 的形状校验字符串：非负、最多 16 位整数、2 位小数，不收 `NaN`、`Inf`、科学计数法；按浮点解析会放过 `NaN`，而 `NUMERIC` 里的 `NaN` 排在所有数之上，`erp/sales` 拿它做的信用检查永远通过。`credit_limit` 写法不对或 `status` 不是 `ACTIVE` / `DISABLED` → `400` / `INVALID_ARGUMENT`；显式传入的 `code` 已被占用 → `409` / `ALREADY_EXISTS`；`version` 过期 → `409` / `ABORTED`；ID 不存在或不是数字 → `404` / `NOT_FOUND`。调用方错误记 Info，从不记 ERROR。
+
 **关键字搜索**（`GET /customers?q=`），给客户选择器用（建单、商机建档、移动端搜索）：
 
 - `q` 去掉首尾空白；为空就是不过滤，结果与不带 `q` 的列表完全一样。

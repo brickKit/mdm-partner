@@ -19,7 +19,7 @@
 ## 部署前准备
 
 - **PostgreSQL**：schema `mdm_customer`；如果你的 schema 约定会建 `mdm_customer_archive` 也可以建（本组件从不写它）。登录角色 `mdm_customer_rw`，在 `mdm_customer` 上有 `USAGE` 与 `CREATE`，以及它的密码。迁移以这个角色运行并建表，所以表归它所有——这一点有用：运行中的组件会自己给 `event_outbox` / `event_inbox` 建周分区，这需要表的所有权。brickKit 不建这些；在 BrickEnterprise 装配项目里，`make dev-env` 把密码写进 `.env`，`make db-init` 建 schema、角色与授权。
-- **NATS** 可经 `NATS_URL` 访问：事件先写 Outbox 表，再由后台循环推送。NATS 不可达时组件照常启动，事件留在 Outbox 里等待。
+- **NATS** 在组件启动时可经 `NATS_URL` 访问：连不上时进程在启动时就退出。事件与业务变更在同一个事务里写进 Outbox 表，再由后台循环推送；运行起来之后，发不出去的事件留在 Outbox 里重试，不会丢。
 - **权限**（`infra/authz`）与**身份**（`infra/iam-casdoor`，或任何提供 JWKS 的 IAM）可经 `AUTHZ_BUNDLE_URL`、`IAM_JWKS_URL` 访问，REST 路由才会返回错误以外的结果。它们是配置不是依赖：没有它们组件照样启动。
 - 演示数据（可选）：组件跑起来之后，在组件目录 `make seed`，经真实 gRPC 接口建 15 个示例客户。
 
@@ -47,7 +47,7 @@
 ## 契约索引
 
 - `contracts/mdm/customer/v1/customer.proto` —— 给别的组件的 gRPC `mdm.customer.v1.CustomerService`：`Create`、`Update`、`SetStatus`、`AddContact`（都带 `idempotency_key`；`Update` 与 `SetStatus` 还带当前 `version`，过期时返回 `ABORTED`）、`Get`、`List`（游标分页，没有 offset）、`BatchGet`（缺失的 ID 放进 `missing_ids`，不报错）、`GetSummary`（ID、编号、名称、状态、版本——摘要副本要的字段）。Go 包是独立模块 `github.com/brickKit/mdm-customer/gen/mdm/customer`。
-- `contracts/customer.openapi.yaml` —— `/mdm/customer` 下的 REST，每条路由都带权限键：`GET /customers`（`mdm.customer.view`；查询参数 `q` 按 code 或名称匹配、大小写不敏感、前缀匹配在前；`status_filter`；`created_after` / `created_before`，默认最近 90 天；`cursor`、`page_size`）、`GET /customers/{id}`（`mdm.customer.view`）、`POST /customers`（`mdm.customer.create`）、`PATCH /customers/{id}`（`mdm.customer.update`）、`POST /customers/{id}/status`（`mdm.customer.set_status`；"删除"就是停用）、`POST /customers/{id}/contacts`（`mdm.customer.add_contact`）。`BatchGet` 不在 REST 上。
+- `contracts/customer.openapi.yaml` —— `/mdm/customer` 下的 REST，每条路由都带权限键：`GET /customers`（`mdm.customer.view`；查询参数 `q` 按 code 或名称匹配、大小写不敏感、前缀匹配在前；`status_filter`；`created_after` / `created_before`，默认最近 90 天；`cursor`、`page_size`）、`GET /customers/{id}`（`mdm.customer.view`）、`POST /customers`（`mdm.customer.create`）、`PATCH /customers/{id}`（`mdm.customer.update`）、`POST /customers/{id}/status`（`mdm.customer.set_status`；"删除"就是停用）、`POST /customers/{id}/contacts`（`mdm.customer.add_contact`）。`BatchGet` 不在 REST 上。两边的错误一致：`credit_limit` 不是非负十进制（最多 16 位整数、2 位小数，不收 `NaN`、`Inf`、科学计数法），或 `status` 不是 `ACTIVE` / `DISABLED` → `400` / `INVALID_ARGUMENT`；显式传入的 `code` 已被占用 → `409` / `ALREADY_EXISTS`；`version` 过期 → `409` / `ABORTED`；客户 ID 不存在或不是数字 → `404` / `NOT_FOUND`。
 - `contracts/events/customer.events.json` —— 经 Outbox 发布的事件：`mdm.customer.created.v1`（新建）、`mdm.customer.updated.v1`（修改与重新启用）、`mdm.customer.disabled.v1`（停用）。每条都带聚合 `version`，消费者只在版本大于本地已有值时应用。不消费任何事件。
 - `assembly.yaml` —— 本项目的元数据：上面五个权限键、菜单项、网关路由 `/mdm/customer/**`、schema 与角色，以及 `data_scopes: none`。
 

@@ -43,6 +43,8 @@ gRPC `mdm.customer.v1.CustomerService`, for other components:
 
 REST under `/mdm/customer`, every route behind a key: `GET /customers` and `GET /customers/{id}` (`mdm.customer.view`), `POST /customers` (`mdm.customer.create`), `PATCH /customers/{id}` (`mdm.customer.update`), `POST /customers/{id}/status` (`mdm.customer.set_status`), `POST /customers/{id}/contacts` (`mdm.customer.add_contact`). `BatchGet` is gRPC only: no end-user screen asks for a list of customer IDs, and on the public API it would invite use as a bulk export. There is no status endpoint for timed-out writes: no component writes here synchronously as part of its own transaction.
 
+Errors are the same on REST and gRPC (be-sdk-go maps the gRPC code to the HTTP status). `credit_limit` is checked as a string against the shape of `NUMERIC(18,2)`: non-negative, at most 16 integer digits and 2 decimals, no `NaN`, `Inf` or exponent; parsing it as a float would let `NaN` through, and `NaN` in `NUMERIC` ranks above every number, so a credit check against it in `erp/sales` always passes. A malformed `credit_limit` or a `status` other than `ACTIVE` / `DISABLED` → `400` / `INVALID_ARGUMENT`; an explicit `code` already taken → `409` / `ALREADY_EXISTS`; a stale `version` → `409` / `ABORTED`; an unknown or non-numeric ID → `404` / `NOT_FOUND`. Caller errors are logged at Info, never ERROR.
+
 **Keyword search** (`GET /customers?q=`), for the customer pickers (order entry, opportunity entry, mobile search):
 
 - `q` is trimmed; empty means no filter, so the list is exactly the unfiltered one.
