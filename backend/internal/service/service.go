@@ -1,6 +1,6 @@
 // Package service 是 mdm-customer 的业务规则层。这一层薄：乐观锁、幂等、事件
 // 都在 repo 层随 SQL 在同一个事务里做；这里做入参校验，给 http / grpc 一个
-// 共用的入口，外加错误日志。
+// 共用的入口，外加错误日志（级别按错误性质选，见 logFailure）。
 package service
 
 import (
@@ -9,6 +9,9 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
 )
@@ -25,6 +28,21 @@ type Service struct {
 
 func New(r *repo.Repo, logger *slog.Logger) *Service {
 	return &Service{repo: r, logger: logger}
+}
+
+// logFailure 按错误的性质选日志级别。调用方自己能纠正的错误（参数、重复 code、
+// 找不到、版本过期）记 Info：访问日志与 RED 指标已经记下状态码。调用方断开或进程
+// 关停时的取消记 Warn。ERROR 只留给映射成 Internal、需要运维处理的错误。
+func (s *Service) logFailure(msg string, err error, attrs ...any) {
+	attrs = append(attrs, "error", err)
+	switch {
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		s.logger.Warn(msg, attrs...)
+	case status.Code(ToStatus(err)) == codes.Internal:
+		s.logger.Error(msg, attrs...)
+	default:
+		s.logger.Info(msg, attrs...)
+	}
 }
 
 // decimalCreditLimit 是 credit_limit 唯一接受的写法：非负十进制字符串，最多 16 位
@@ -57,7 +75,7 @@ func (s *Service) Create(ctx context.Context, in repo.CreateInput) (*repo.Custom
 	}
 	c, err := s.repo.Create(ctx, in)
 	if err != nil {
-		s.logger.Error("创建客户失败", "code", in.Code, "error", err)
+		s.logFailure("创建客户失败", err, "code", in.Code)
 		return nil, err
 	}
 	return c, nil
@@ -88,7 +106,7 @@ func (s *Service) Update(ctx context.Context, in UpdateInput) (*repo.Customer, e
 		CreditLimit:    in.CreditLimit,
 	})
 	if err != nil {
-		s.logger.Error("更新客户失败", "id", in.ID, "error", err)
+		s.logFailure("更新客户失败", err, "id", in.ID)
 		return nil, err
 	}
 	return c, nil
@@ -112,7 +130,7 @@ func (s *Service) SetStatus(ctx context.Context, in SetStatusInput) (*repo.Custo
 		Status:         in.Status,
 	})
 	if err != nil {
-		s.logger.Error("变更客户状态失败", "id", in.ID, "status", in.Status, "error", err)
+		s.logFailure("变更客户状态失败", err, "id", in.ID, "status", in.Status)
 		return nil, err
 	}
 	return c, nil
@@ -121,7 +139,7 @@ func (s *Service) SetStatus(ctx context.Context, in SetStatusInput) (*repo.Custo
 func (s *Service) AddContact(ctx context.Context, in repo.AddContactInput) (*repo.Contact, error) {
 	c, err := s.repo.AddContact(ctx, in)
 	if err != nil {
-		s.logger.Error("新增联系人失败", "customer_id", in.CustomerID, "error", err)
+		s.logFailure("新增联系人失败", err, "customer_id", in.CustomerID)
 		return nil, err
 	}
 	return c, nil

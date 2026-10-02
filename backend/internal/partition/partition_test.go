@@ -1,9 +1,12 @@
 package partition
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
+	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -69,5 +72,21 @@ func TestEnsureAll_建当前周分区且连跑两次都成功(t *testing.T) {
 	}
 	if !exists {
 		t.Fatalf("期望分区 %s 已经建好", name)
+	}
+}
+
+// TestStart_关停时的取消不记ERROR：进程关停取消 ctx 时，正在跑的分区检查会以
+// context canceled 失败——这是关停，不是故障，不该记 ERROR（外壳按 ERROR 行找问题）。
+func TestStart_关停时的取消不记ERROR(t *testing.T) {
+	db := testDB(t)
+	var logs bytes.Buffer
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := Start(ctx, db, "mdm_customer_rw", "mdm_customer", slog.New(slog.NewTextHandler(&logs, nil))); err != nil {
+		t.Fatalf("ctx 取消时 Start 应该正常返回，实际 %v", err)
+	}
+	if strings.Contains(logs.String(), "level=ERROR") {
+		t.Fatalf("关停时的取消不该记 ERROR，实际日志：\n%s", logs.String())
 	}
 }

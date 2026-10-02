@@ -26,9 +26,14 @@ var partitionedTables = []string{"event_outbox", "event_inbox"}
 // 下一轮还能补上，也不能因为这个后台任务拖垮整个进程（进外壳后是所有成员）。
 // 只在 ctx 取消时返回。
 func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Logger) error {
-	if err := ensureAll(ctx, db, role, schema); err != nil {
-		logger.Error("分区维护失败", "error", err)
+	check := func() {
+		// 关停时 ctx 被取消，正在跑的检查会以 context canceled 失败：那是关停，
+		// 不是故障，不记 ERROR。
+		if err := ensureAll(ctx, db, role, schema); err != nil && ctx.Err() == nil {
+			logger.Error("分区维护失败", "error", err)
+		}
 	}
+	check()
 
 	ticker := time.NewTicker(checkInterval)
 	defer ticker.Stop()
@@ -37,9 +42,7 @@ func Start(ctx context.Context, db *sql.DB, role, schema string, logger *slog.Lo
 		case <-ctx.Done():
 			return nil
 		case <-ticker.C:
-			if err := ensureAll(ctx, db, role, schema); err != nil {
-				logger.Error("分区维护失败", "error", err)
-			}
+			check()
 		}
 	}
 }
