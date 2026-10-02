@@ -1,0 +1,100 @@
+package grpc
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"log/slog"
+	"net"
+	"os"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	grpclib "google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
+	"google.golang.org/grpc/test/bufconn"
+
+	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
+
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
+)
+
+// 这里测的是 gRPC 面交出的状态码：真的 grpc.Server（内存里的 bufconn 连接，
+// 请求照样序列化、过网络栈），真的测试库。
+
+var keySeq int64
+
+// runKey 返回本次运行独有的幂等键 / 客户编号（测试库跨运行保留数据）。
+func runKey(prefix string) string {
+	return fmt.Sprintf("%s-%d-%d", prefix, time.Now().UnixNano(), atomic.AddInt64(&keySeq, 1))
+}
+
+func testClient(t *testing.T) (customerv1.CustomerServiceClient, *repo.Repo) {
+	t.Helper()
+	dsn := os.Getenv("TEST_PG_DSN")
+	if dsn == "" {
+		t.Skip("未设置 TEST_PG_DSN")
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	r := repo.New(db, "mdm_customer_rw", "mdm_customer")
+
+	lis := bufconn.Listen(1 << 20)
+	gs := grpclib.NewServer()
+	customerv1.RegisterCustomerServiceServer(gs, New(service.New(r, slog.Default())))
+	go func() { _ = gs.Serve(lis) }()
+	t.Cleanup(gs.Stop)
+
+	conn, err := grpclib.NewClient("passthrough:///bufnet",
+		grpclib.WithContextDialer(func(ctx context.Context, _ string) (net.Conn, error) { return lis.DialContext(ctx) }),
+		grpclib.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { conn.Close() })
+	return customerv1.NewCustomerServiceClient(conn), r
+}
+
+// TestCreditLimit_gRPC的NaN_Inf_科学计数法等写法是InvalidArgument：别的组件经
+// gRPC 写客户时，credit_limit 不是严格的非负十进制就拿到 InvalidArgument，库里的
+// 额度与 version 不变（NaN 一旦落库就随事件流进 erp/sales 与 erp/finance）。
+func TestCreditLimit_gRPC的NaN_Inf_科学计数法等写法是InvalidArgument(t *testing.T) {
+	cli, r := testClient(t)
+	ctx := context.Background()
+
+	base, err := r.Create(ctx, repo.CreateInput{
+		IdempotencyKey: runKey("grpc-credit-base"), Code: runKey("C-GRPC-CREDIT"), Name: "额度校验基线", CreditLimit: "100.00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range []string{"NaN", "Inf", "1e3", "-1", "1.234", "abc"} {
+		_, err := cli.Create(ctx, &customerv1.CreateRequest{
+			IdempotencyKey: runKey("grpc-credit-bad"), Name: "额度校验", CreditLimit: v})
+		if got := status.Code(err); got != codes.InvalidArgument {
+			t.Errorf("Create credit_limit=%q 应该是 InvalidArgument，实际 %v（%v）", v, got, err)
+		}
+		_, err = cli.Update(ctx, &customerv1.UpdateRequest{
+			IdempotencyKey: runKey("grpc-credit-bad-upd"), Id: base.ID, Version: base.Version,
+			Name: base.Name, CreditLimit: v})
+		if got := status.Code(err); got != codes.InvalidArgument {
+			t.Errorf("Update credit_limit=%q 应该是 InvalidArgument，实际 %v（%v）", v, got, err)
+		}
+	}
+
+	got, err := cli.Get(ctx, &customerv1.GetRequest{Id: base.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.CreditLimit != "100.00" || got.Version != base.Version {
+		t.Fatalf("被拒绝的 Update 不该改库，期望 100.00 / version %d，实际 %s / %d", base.Version, got.CreditLimit, got.Version)
+	}
+}

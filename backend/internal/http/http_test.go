@@ -10,12 +10,14 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
@@ -140,5 +142,90 @@ func TestList_REST把q传给列表(t *testing.T) {
 	}
 	if len(body.Customers) != 1 || body.Customers[0].ID != hit.ID {
 		t.Fatalf("q=%s 期望只返回客户 %s，实际返回 %d 条", tok, hit.ID, len(body.Customers))
+	}
+}
+
+// testRuntime 是 besdk.NewGinEngine 要的最小 Runtime：错误到状态码的映射、panic
+// 恢复都在 SDK 的中间件里，REST 的状态码要经过它才是真实的。
+func testRuntime() *besdk.Runtime {
+	return &besdk.Runtime{
+		Registry: besdk.NewRegistry(),
+		Logger:   slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Tracer:   noop.NewTracerProvider().Tracer("test"),
+	}
+}
+
+// engine 挂上与 RegisterRoutes 相同的路径与 handler，只是不带权限键：验签与权限
+// 判定是 SDK 的事，由 SDK 自己的测试守；这里测参数校验与状态码。
+func engine(svc *service.Service) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	eng := besdk.NewGinEngine(testRuntime())
+	g := eng.Group("/mdm/customer")
+	g.GET("/customers/:id", getHandler(svc))
+	g.POST("/customers", createHandler(svc))
+	g.PATCH("/customers/:id", updateHandler(svc))
+	g.POST("/customers/:id/status", setStatusHandler(svc))
+	g.POST("/customers/:id/contacts", addContactHandler(svc))
+	return eng
+}
+
+// do 发一次请求，返回状态码与响应体原文。
+func do(t *testing.T, eng *gin.Engine, method, path string, body any) (int, string) {
+	t.Helper()
+	var req *http.Request
+	if body == nil {
+		req = httptest.NewRequest(method, path, nil)
+	} else {
+		raw, err := json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req = httptest.NewRequest(method, path, strings.NewReader(string(raw)))
+		req.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	eng.ServeHTTP(w, req)
+	return w.Code, w.Body.String()
+}
+
+// TestCreditLimit_REST的NaN_Inf_科学计数法等写法返回400：POST /customers 与
+// PATCH /customers/{id} 的 credit_limit 不是严格的非负十进制（最多 16 位整数、2 位
+// 小数）时答 400，不落库、不改库。
+func TestCreditLimit_REST的NaN_Inf_科学计数法等写法返回400(t *testing.T) {
+	r, _ := testRepo(t)
+	svc := service.New(r, slog.Default())
+	eng := engine(svc)
+	ctx := context.Background()
+
+	base, err := r.Create(ctx, repo.CreateInput{
+		IdempotencyKey: runKey("http-credit-base"), Code: runKey("C-HTTP-CREDIT"), Name: "额度校验基线", CreditLimit: "100.00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, v := range []string{"NaN", "Inf", "1e3", "-1", "1.234", "abc"} {
+		code, body := do(t, eng, http.MethodPost, "/mdm/customer/customers", map[string]string{
+			"idempotency_key": runKey("http-credit-bad"), "name": "额度校验", "credit_limit": v})
+		if code != http.StatusBadRequest {
+			t.Errorf("POST /customers credit_limit=%q 应返回 400，实际 %d：%s", v, code, body)
+		}
+		code, body = do(t, eng, http.MethodPatch, "/mdm/customer/customers/"+base.ID, map[string]any{
+			"idempotency_key": runKey("http-credit-bad-upd"), "version": base.Version,
+			"name": base.Name, "credit_limit": v})
+		if code != http.StatusBadRequest {
+			t.Errorf("PATCH /customers/{id} credit_limit=%q 应返回 400，实际 %d：%s", v, code, body)
+		}
+	}
+
+	got, _, err := r.BatchGet(ctx, []string{base.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("客户 %s 应该还在，实际取回 %d 条", base.ID, len(got))
+	}
+	if got[0].CreditLimit != "100.00" || got[0].Version != base.Version {
+		t.Fatalf("被拒绝的 PATCH 不该改库，期望 100.00 / version %d，实际 %s / %d",
+			base.Version, got[0].CreditLimit, got[0].Version)
 	}
 }

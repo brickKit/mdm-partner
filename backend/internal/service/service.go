@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
+	"regexp"
 
 	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
 )
@@ -27,18 +27,23 @@ func New(r *repo.Repo, logger *slog.Logger) *Service {
 	return &Service{repo: r, logger: logger}
 }
 
-// validateCreditLimit 只校验"是合法的非负数"，精度交给 NUMERIC(18,2) 自己报错。
-// 解析成 float64 只为这一次校验，金额的存储与传递一律是十进制字符串。
+// decimalCreditLimit 是 credit_limit 唯一接受的写法：非负十进制字符串，最多 16 位
+// 整数、2 位小数——与列类型 NUMERIC(18,2) 对齐，超出的位数不会被悄悄舍入或溢出成 500。
+//
+// ⚠️ 不能用 strconv.ParseFloat 校验：它放行 "NaN"、"Inf"、"1e3"、"0x1p4"。NaN 存进
+// NUMERIC 排在所有数之上，随 created / updated 事件流进 erp/sales 与 erp/finance，
+// 拿它当额度上限的检查对这个客户从此恒真。
+var decimalCreditLimit = regexp.MustCompile(`^[0-9]{1,16}(\.[0-9]{1,2})?$`)
+
+// validateCreditLimit 只看字符串，不转浮点。空串放行：repo 层留空时默认成 "0"。
+// 金额的存储与传递一律是十进制字符串。
 func validateCreditLimit(s string) error {
 	if s == "" {
-		return nil // repo 层留空时默认成 "0"
+		return nil
 	}
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return fmt.Errorf("%w: credit_limit 不是合法数字：%q", ErrInvalidArgument, s)
-	}
-	if f < 0 {
-		return fmt.Errorf("%w: credit_limit 不能为负数：%q", ErrInvalidArgument, s)
+	if !decimalCreditLimit.MatchString(s) {
+		return fmt.Errorf("%w: credit_limit 必须是非负十进制数（最多 16 位整数、2 位小数；不收 NaN / Inf / 科学计数法）：%q",
+			ErrInvalidArgument, s)
 	}
 	return nil
 }
