@@ -7,7 +7,7 @@
 **拥有**
 
 - 客户主数据：`code`（唯一；调用方留空时按 `C` + 6 位数字生成）、名称、税号、信用额度（十进制字符串）、状态。
-- 客户的联系人与开票信息。
+- 客户的联系人（经 `AddContact` 写入，读接口还不返回）与开票信息（有表，还没有接口）。
 - 事件 `mdm.customer.created.v1`、`mdm.customer.updated.v1`、`mdm.customer.disabled.v1`。
 
 **不拥有**

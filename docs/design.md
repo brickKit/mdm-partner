@@ -22,7 +22,7 @@ Deleting a customer is disabling it (`POST /customers/{id}/status`); there is no
 |---|---|---|
 | `customers` | no | `code` unique (`customers_code_uniq`); `credit_limit NUMERIC(18,2)`; `status` `ACTIVE` / `DISABLED`; `version` for optimistic locking |
 | `contacts` | no | foreign key to `customers` |
-| `billing_infos` | no | foreign key to `customers`; one to three per customer |
+| `billing_infos` | no | foreign key to `customers`; no API writes or reads it yet |
 | `command_idempotency` | no | `idempotency_key` primary key, the result ID of the first execution |
 | `event_outbox`, `event_inbox` | weekly, by `created_at` | the outbox the pump publishes from; partitions are created four weeks ahead by the component itself |
 
@@ -48,7 +48,7 @@ REST under `/mdm/customer`, every route behind a key: `GET /customers` and `GET 
 - `q` is trimmed; empty means no filter, so the list is exactly the unfiltered one.
 - A row matches when `lower(code)` or `lower(name)` contains `lower(q)`. Matching uses `strpos` and `starts_with`, not `LIKE`: `%` and `_` in user input are literal characters and need no escaping.
 - Rank 0 when code or name starts with `q`, rank 1 when it only contains it. Order: rank, then `created_at` descending, then `id` descending.
-- The rank is part of the keyset: the cursor carries it once paging reaches rank 1, so pages never skip or repeat a row at the boundary. Cursors of unfiltered lists keep their previous format.
+- The rank is part of the keyset: the cursor carries it once paging reaches rank 1, so pages never skip or repeat a row at the boundary. Unfiltered lists encode `created_at` and `id`; ranked pages add the rank in front.
 - The default 90-day window applies, as to every list in the project; a picker that must find older customers passes `created_after`. REST reads `created_after` / `created_before` (RFC 3339; malformed → `400`).
 - No index. The contains branch must scan the rows in the window whatever index exists, and a prefix index cannot serve an `OR` with it; the table is master-data sized (thousands to tens of thousands of rows). If it ever grows, a trigram index (`pg_trgm`) is the answer, not a prefix index.
 - REST only. gRPC `ListRequest` is unchanged; adding `q` there is an append-only change when a caller needs it.
@@ -106,6 +106,6 @@ No slot family: both references point the same way, and no customer profile need
 | Question | Current answer |
 |---|---|
 | Is `NUMERIC(18,2)` enough for the credit limit, and in which currency? | Single currency, two decimals, as for order totals; widening later is an additive migration |
-| Contacts and billing details are written but not returned by `Get` / `List` / `BatchGet` | Not yet needed by any screen; adding them to the read path is an append-only contract change |
+| Contacts are written (`AddContact`) but not returned by `Get` / `List` / `BatchGet`; billing details have a table but no write or read path yet | Not yet needed by any screen; adding them is an append-only contract change |
 | Should keyword search ignore the default 90-day window? | No, for now: the project convention applies to every list, and pickers pass `created_after`. Revisit if pickers find it awkward (the frontend work decides) |
 | Two concurrent requests with the same `idempotency_key`: the loser gets an error, not the winner's result | Only one row lands, which is the promise; returning the winner's result to the loser would need a retry on the primary-key conflict |

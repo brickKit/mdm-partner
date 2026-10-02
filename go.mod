@@ -11,11 +11,10 @@ require (
 	google.golang.org/protobuf v1.36.12
 )
 
-// gen/mdm/customer 是本仓库自己嵌套的 go module（不是外部依赖）——理由与 module
-// 边界的取舍同 erp-finance 的 go.mod 那条注释（阶段四调研记录 04 §13）：让外壳
-// 能把 crm-opportunity/erp-sales vendor 的同一份契约镜像 replace 到这里，避免
-// protobuf 全局注册表撞车；module 边界切在 v1 的上一级，因为 Go 模块路径禁止
-// 以字面量 `/v1` 结尾。
+// gen/mdm/customer 是本仓库里嵌套的独立模块：调用方只 require 契约包、不拉整个
+// 组件，进同一个外壳时最小版本选择只选出一份生成代码，protobuf 注册表不会重复
+// 注册。模块路径不能以 /v1 结尾，所以边界切在 v1 的上一级。下面的 replace 只给
+// 本仓库自己构建用；别人拉取时用的是 require 里的契约包 tag。
 replace github.com/brickKit/mdm-customer/gen/mdm/customer => ./gen/mdm/customer
 
 require (

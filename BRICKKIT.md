@@ -7,7 +7,7 @@ The one record of who each customer is: name, code, tax ID, credit limit, status
 **Owns**
 
 - Customer master data: `code` (unique; generated as `C` + six digits when the caller leaves it empty), name, tax ID, credit limit (a decimal string), status.
-- Contacts and billing details of a customer.
+- Contacts of a customer (written with `AddContact`, not yet returned by reads) and billing details (a table, no API yet).
 - The events `mdm.customer.created.v1`, `mdm.customer.updated.v1`, `mdm.customer.disabled.v1`.
 
 **Does not own**

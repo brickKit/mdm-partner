@@ -22,7 +22,7 @@
 |---|---|---|
 | `customers` | 否 | `code` 唯一（`customers_code_uniq`）；`credit_limit NUMERIC(18,2)`；`status` 为 `ACTIVE` / `DISABLED`；`version` 用于乐观锁 |
 | `contacts` | 否 | 外键指向 `customers` |
-| `billing_infos` | 否 | 外键指向 `customers`；每个客户一到三条 |
+| `billing_infos` | 否 | 外键指向 `customers`；还没有任何接口读写它 |
 | `command_idempotency` | 否 | 主键 `idempotency_key`，记第一次执行的结果 ID |
 | `event_outbox`、`event_inbox` | 按 `created_at` 周分区 | 推送循环从 Outbox 读；分区由组件自己提前 4 周建好 |
 
@@ -48,7 +48,7 @@
 - `q` 去掉首尾空白；为空就是不过滤，结果与不带 `q` 的列表完全一样。
 - `lower(code)` 或 `lower(name)` 包含 `lower(q)` 即命中。匹配用 `strpos` 与 `starts_with`，不用 `LIKE`：用户输入里的 `%` 与 `_` 是字面字符，不用转义。
 - code 或名称以 `q` 开头的档位为 0，只是包含的为 1。排序：档位，再 `created_at` 倒序，再 `id` 倒序。
-- 档位是 keyset 的一部分：翻到档位 1 之后游标带上它，分界处翻页不漏不重。不带 `q` 的列表游标格式不变。
+- 档位是 keyset 的一部分：翻到档位 1 之后游标带上它，分界处翻页不漏不重。不带 `q` 的列表游标编码 `created_at` 与 `id`；带档位的页在前面加上档位。
 - 默认 90 天窗口照常生效，与项目里所有列表一致；必须找到更早客户的选择器显式给 `created_after`。REST 读 `created_after` / `created_before`（RFC 3339；格式不对 → `400`）。
 - 不加索引。包含匹配不管有什么索引都要扫描窗口内的行，前缀索引也服务不了与它 `OR` 在一起的条件；表是主数据量级（几千到几万行）。真要变大，答案是 trigram 索引（`pg_trgm`），不是前缀索引。
 - 只在 REST 上。gRPC `ListRequest` 不变；哪个调用方需要时再以只增的方式加 `q`。
@@ -106,6 +106,6 @@
 | 问题 | 目前的答案 |
 |---|---|
 | 信用额度用 `NUMERIC(18,2)` 够不够、什么币种？ | 单币种、两位小数，与订单金额一致；以后放宽是只增的迁移 |
-| 联系人与开票信息写得进去，但 `Get` / `List` / `BatchGet` 不返回 | 还没有页面需要；加进读路径是只增的契约变更 |
+| 联系人写得进去（`AddContact`），但 `Get` / `List` / `BatchGet` 不返回；开票信息有表，还没有读写接口 | 还没有页面需要；补上是只增的契约变更 |
 | 关键字搜索要不要无视默认 90 天窗口？ | 暂时不：项目约定对所有列表生效，选择器传 `created_after`。选择器用起来别扭时再议（由前端工作决定） |
 | 同一个 `idempotency_key` 的两个并发请求：输的那个收到错误，而不是赢家的结果 | 只落一条，这正是承诺的内容；要让输家也拿到赢家的结果，需要在主键冲突时重试一次 |
