@@ -100,12 +100,14 @@ func getHandler(svc *service.Service) gin.HandlerFunc {
 	}
 }
 
-// parseListInput 读 GET /customers 的查询参数。created_after / created_before
+// parseListInput 读 GET /customers 的查询参数。q 是关键字（匹配规则见
+// repo.List）；created_after / created_before
 // 是 RFC 3339 时间，不传就由 repo 补默认窗口；格式不对返回错误（handler
 // 回 400），不悄悄忽略。
 func parseListInput(c *gin.Context) (repo.ListInput, error) {
 	pageSize, _ := strconv.Atoi(c.Query("page_size"))
 	in := repo.ListInput{
+		Q:            c.Query("q"),
 		Cursor:       c.Query("cursor"),
 		PageSize:     pageSize,
 		StatusFilter: c.Query("status_filter"),

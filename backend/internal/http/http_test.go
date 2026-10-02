@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -105,5 +106,30 @@ func TestList_REST的created_after格式不对返回400(t *testing.T) {
 	code, _ := getList(t, svc, url.Values{"created_after": {"昨天"}})
 	if code != http.StatusBadRequest {
 		t.Fatalf("created_after 不是 RFC 3339 时间应返回 400，实际 %d", code)
+	}
+}
+
+// TestList_REST把q传给列表：GET /customers?q= 只返回 code 或 name 含关键字
+// 的客户（排序与翻页规则由 repo 的测试守）。
+func TestList_REST把q传给列表(t *testing.T) {
+	r, _ := testRepo(t)
+	ctx := context.Background()
+	svc := service.New(r, slog.Default())
+	tok := fmt.Sprintf("hq%x", time.Now().UnixNano())
+
+	hit, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: tok + "-hit", Name: tok + "公司"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: tok + "-miss", Name: "别的客户"}); err != nil {
+		t.Fatal(err)
+	}
+
+	code, body := getList(t, svc, url.Values{"q": {tok}})
+	if code != http.StatusOK {
+		t.Fatalf("期望 200，实际 %d", code)
+	}
+	if len(body.Customers) != 1 || body.Customers[0].ID != hit.ID {
+		t.Fatalf("q=%s 期望只返回客户 %s，实际返回 %d 条", tok, hit.ID, len(body.Customers))
 	}
 }

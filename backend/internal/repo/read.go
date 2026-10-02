@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
@@ -43,6 +44,7 @@ func (r *Repo) BatchGet(ctx context.Context, ids []string) (found []*Customer, m
 
 // ListInput 对应 ListRequest。没有 offset：列表只能按游标翻页。
 type ListInput struct {
+	Q             string // 关键字：匹配 code 或 name，见 List
 	Cursor        string
 	PageSize      int
 	StatusFilter  string
@@ -67,14 +69,22 @@ func buildListQuery(in ListInput) besdk.Query {
 	})
 }
 
-// cursorKey 是游标里编码的排序键 (created_at, id)：keyset 分页，不是 offset。
+// cursorKey 是游标里编码的排序键 (match_rank, created_at, id)：keyset 分页，
+// 不是 offset。不带 q 时 match_rank 恒为 0。
 type cursorKey struct {
+	Rank      int
 	CreatedAt time.Time
 	ID        int64
 }
 
-// List 按 created_at、id 倒序分页。多取一条判断有没有下一页；最后一页的
-// NextCursor 是空字符串。
+// List 分页列出客户：先按 match_rank（带 q 时前缀匹配为 0、只是包含为 1；
+// 不带 q 时恒为 0），再按 created_at、id 倒序。多取一条判断有没有下一页；
+// 最后一页的 NextCursor 是空字符串。
+//
+// q 去掉首尾空白后为空就等于不过滤。匹配用 strpos / starts_with 而不是
+// LIKE：用户输入里的 % 与 _ 按字面匹配，不必转义。lower() 让大小写不敏感。
+// 默认时间窗口照常生效（与不带 q 的列表一致），要搜更早建档的客户就显式
+// 给 CreatedAfter。
 func (r *Repo) List(ctx context.Context, in ListInput) (*ListResult, error) {
 	q := buildListQuery(in)
 
@@ -89,35 +99,24 @@ func (r *Repo) List(ctx context.Context, in ListInput) (*ListResult, error) {
 
 	var out ListResult
 	err := besdk.WithTx(ctx, r.db, r.role, r.schema, func(tx *sql.Tx) error {
-		query := `SELECT ` + customerColumns + `
-			FROM customers
-			WHERE created_at >= $1 AND created_at <= $2`
-		args := []any{q.From, q.To}
-		if in.StatusFilter != "" {
-			args = append(args, in.StatusFilter)
-			query += fmt.Sprintf(" AND status = $%d", len(args))
-		}
-		if ck != nil {
-			args = append(args, ck.CreatedAt, ck.ID)
-			query += fmt.Sprintf(" AND (created_at, id) < ($%d, $%d)", len(args)-1, len(args))
-		}
-		args = append(args, q.Limit+1)
-		query += fmt.Sprintf(" ORDER BY created_at DESC, id DESC LIMIT $%d", len(args))
-
-		customers, err := queryCustomers(ctx, tx, query, args...)
+		query, args := listSQL(in, q, ck)
+		rows, err := queryRanked(ctx, tx, query, args...)
 		if err != nil {
 			return err
 		}
-		if len(customers) > q.Limit {
-			last := customers[q.Limit-1]
-			lastRawID, err := strconv.ParseInt(last.ID, 10, 64)
+		if len(rows) > q.Limit {
+			last := rows[q.Limit-1]
+			lastRawID, err := strconv.ParseInt(last.c.ID, 10, 64)
 			if err != nil {
 				return err
 			}
-			out.NextCursor = encodeCursor(cursorKey{CreatedAt: last.CreatedAt, ID: lastRawID})
-			customers = customers[:q.Limit]
+			out.NextCursor = encodeCursor(cursorKey{Rank: last.rank, CreatedAt: last.c.CreatedAt, ID: lastRawID})
+			rows = rows[:q.Limit]
 		}
-		out.Customers = customers
+		out.Customers = make([]*Customer, 0, len(rows))
+		for _, row := range rows {
+			out.Customers = append(out.Customers, row.c)
+		}
 		return nil
 	})
 	if err != nil {
@@ -126,20 +125,61 @@ func (r *Repo) List(ctx context.Context, in ListInput) (*ListResult, error) {
 	return &out, nil
 }
 
-func queryCustomers(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]*Customer, error) {
+// listSQL 拼 List 的查询。内层算 match_rank 并做全部过滤，外层按游标切页。
+func listSQL(in ListInput, q besdk.Query, ck *cursorKey) (string, []any) {
+	args := []any{q.From, q.To}
+	arg := func(v any) string {
+		args = append(args, v)
+		return fmt.Sprintf("$%d", len(args))
+	}
+
+	rank := "0"
+	where := "created_at >= $1 AND created_at <= $2"
+	if in.StatusFilter != "" {
+		where += " AND status = " + arg(in.StatusFilter)
+	}
+	if kw := strings.TrimSpace(in.Q); kw != "" {
+		p := "lower(" + arg(kw) + ")"
+		where += fmt.Sprintf(" AND (strpos(lower(code), %s) > 0 OR strpos(lower(name), %s) > 0)", p, p)
+		rank = fmt.Sprintf("CASE WHEN starts_with(lower(code), %s) OR starts_with(lower(name), %s) THEN 0 ELSE 1 END", p, p)
+	}
+
+	query := `SELECT ` + customerColumns + `, match_rank FROM (
+			SELECT ` + customerColumns + `, ` + rank + ` AS match_rank
+			FROM customers
+			WHERE ` + where + `
+		) t`
+	if ck != nil {
+		r, c, i := arg(ck.Rank), arg(ck.CreatedAt), arg(ck.ID)
+		query += fmt.Sprintf(" WHERE (match_rank > %s OR (match_rank = %s AND (created_at, id) < (%s, %s)))", r, r, c, i)
+	}
+	query += " ORDER BY match_rank, created_at DESC, id DESC LIMIT " + arg(q.Limit+1)
+	return query, args
+}
+
+type rankedCustomer struct {
+	c    *Customer
+	rank int
+}
+
+func queryRanked(ctx context.Context, tx *sql.Tx, query string, args ...any) ([]rankedCustomer, error) {
 	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("查 customers: %w", err)
 	}
 	defer rows.Close()
 
-	var customers []*Customer
+	var out []rankedCustomer
 	for rows.Next() {
-		c, err := scanCustomerRow(rows)
-		if err != nil {
+		var rawID int64
+		var c Customer
+		var rank int
+		if err := rows.Scan(&rawID, &c.Code, &c.Name, &c.TaxNo, &c.CreditLimit,
+			&c.CreatedAt, &c.UpdatedAt, &c.Version, &c.Status, &rank); err != nil {
 			return nil, err
 		}
-		customers = append(customers, c)
+		c.ID = strconv.FormatInt(rawID, 10)
+		out = append(out, rankedCustomer{c: &c, rank: rank})
 	}
-	return customers, rows.Err()
+	return out, rows.Err()
 }
