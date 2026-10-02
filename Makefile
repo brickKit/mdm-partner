@@ -59,9 +59,12 @@ contract-check:  ## proto 只增不改（buf lint + buf breaking，对比上一�
 	 echo "buf breaking --against '$$against'"; buf breaking --against "$$against"
 
 import-scan:  ## 只 import SDK 与自己；别的组件只能用它发布的 gen/ 契约包
-	@bad="$$(go list -deps ./... 2>/dev/null | grep -E '^github.com/brickKit/' \
-	         | grep -vE '^github.com/brickKit/($(REPO)/v$(MAJOR)|be-sdk-go)(/|$$)' \
-	         | grep -vE '^github.com/brickKit/[^/]+/gen/' || true)"; \
+	@# go list 失败（模块解析不了、编译错误）时必须失败：先单独取输出、查退出码，
+	@# 再过滤。管道里直接接 grep 会吞掉 go list 的退出码，什么都没扫到也打印 ✓。
+	@deps="$$(go list -deps ./...)" || { echo "✗ go list -deps ./... 失败，没法扫 import"; exit 1; }; \
+	 bad="$$(printf '%s\n' "$$deps" | awk '/^github\.com\/brickKit\// \
+	         && !/^github\.com\/brickKit\/($(REPO)\/v$(MAJOR)|be-sdk-go)(\/|$$)/ \
+	         && !/^github\.com\/brickKit\/[^\/]+\/gen\//')"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "✗ import 了别的组件的代码："; echo "$$bad"; exit 1; fi; \
 	 echo "✓ 无组件间 import"
@@ -86,8 +89,8 @@ module-check:  ## 模块能被合进外壳：入口签名对、零 os.Getenv、�
 	 done; \
 	 if [ -n "$$bad" ]; then \
 	   echo "✗ 模块碰了进程级的东西或自己装配："; printf '%b' "$$bad"; exit 1; fi
-	@bad="$$(go list -deps ./backend/module/... ./backend/internal/... 2>/dev/null \
-	         | grep -E 'labstack/echo|gofiber/fiber|go-chi/chi|jinzhu/gorm|gorm\.io|lib/pq' || true)"; \
+	@deps="$$(go list -deps ./backend/module/... ./backend/internal/...)" || { echo "✗ go list -deps 失败，没法核对依赖栈"; exit 1; }; \
+	 bad="$$(printf '%s\n' "$$deps" | awk '/labstack\/echo|gofiber\/fiber|go-chi\/chi|jinzhu\/gorm|gorm\.io|lib\/pq/')"; \
 	 if [ -n "$$bad" ]; then \
 	   echo "✗ 用了锁定栈之外的库："; echo "$$bad"; exit 1; fi
 	@echo "✓ 入口签名对、零 os.Getenv、零进程级初始化、栈合规"
