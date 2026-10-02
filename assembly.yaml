@@ -1,4 +1,4 @@
-id: mdm/customer                     # 必须与 component.yaml 一致，be-ops 校验
+id: mdm/customer                     # 必须与 component.yaml 的 metadata.id 一致，be-ops 校验
 
 domain: mdm
 tier: backend
@@ -10,10 +10,10 @@ menus:
   - { key: mdm.customer, title: 客户管理, permission: mdm.customer.view }
 
 data:
-  schema: mdm_customer               # registry/schemas.tsv
+  schema: mdm_customer               # 与 registry/schemas.tsv 一致
   role:   mdm_customer_rw            # 登录角色，`PG_USER` 的值
 
-data_scopes: none                    # 客户主数据全员可见（设计书 §14.2.2：mdm 4 个组件全部 none）
+data_scopes: none                    # 客户主数据是全员共用的参照数据，不做行级过滤
 
 permissions:
   - { key: mdm.customer.view,        title: 查看客户主数据,     type: page   }

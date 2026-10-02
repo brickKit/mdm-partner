@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# 撤销 seed.sh 灌的数据。反查 command_idempotency 表拿真实行 id 再精确
-# 删除，不靠名字模糊匹配——防止这个环境里将来混进真实数据时被误删（同
-# infra/seed-data/clean.sh 的既有判据）。permissions 这类"只增不改"的
-# 表不在本脚本的管辖范围内，本组件没有这种表。
+# 撤销 seed.sh 灌的数据。按固定幂等键反查 command_idempotency 拿真实行 id 再
+# 精确删除，不靠名字模糊匹配，环境里混进真实数据时也不会误删。
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../../.." && pwd)"
 
@@ -21,7 +19,7 @@ BEGIN
   FOR k IN SELECT unnest(ARRAY[
     'seed-customer-1','seed-customer-2','seed-customer-3','seed-customer-4','seed-customer-5',
     'seed-customer-6','seed-customer-7','seed-customer-8','seed-customer-9','seed-customer-10',
-    'seed-customer-11','seed-customer-12'
+    'seed-customer-11','seed-customer-12','seed-customer-13','seed-customer-14','seed-customer-15'
   ])
   LOOP
     SELECT result_id::BIGINT INTO cid FROM command_idempotency WHERE idempotency_key = k;

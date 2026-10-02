@@ -1,8 +1,12 @@
-IMAGE   := brickenterprise/mdm-customer
-VERSION := $(shell grep -E '^\s+version:' component.yaml | head -1 | awk '{print $$2}')
+ID      := mdm/customer
+REPO    := mdm-customer
+VERSION := $(shell grep -m1 -E '^  version:' component.yaml | awk '{print $$2}')
+MAJOR   := $(firstword $(subst ., ,$(VERSION)))
+# 项目根：本组件在项目里固定挂在 components/<scope>/<name>/ 下
+ROOT    := ../../..
 
 .DEFAULT_GOAL := help
-.PHONY: help all check-version test image migrate-idempotent dag-check contract-check import-scan module-check docs-check smoke seed seed-clean
+.PHONY: help all check-version test migrate-idempotent dag-check contract-check import-scan module-check docs-check smoke image seed seed-clean
 
 help:  ## 列出所有目标
 	@awk 'BEGIN{FS=":.*##"; printf "\n用法: make <目标>\n\n"} \
@@ -11,112 +15,90 @@ help:  ## 列出所有目标
 	@echo ""
 
 ##@ 汇总
-all: check-version test image migrate-idempotent dag-check contract-check import-scan module-check docs-check  ## 8 个门禁（不含 smoke，它要真起容器）
+all: check-version test migrate-idempotent dag-check contract-check import-scan module-check docs-check  ## 全部门禁（不含要起容器的 smoke / image）
 
-##@ 9 个门禁
-check-version:  ## component.yaml 的 version、git tag、deployment.image 三者不许分叉（§9.1 两个真相源）
-	@tag="$$(git describe --tags --exact-match 2>/dev/null || true)"; \
-	 if [ -n "$$tag" ] && [ "$$tag" != "v$(VERSION)" ]; then \
-	   echo "✗ git tag $$tag 与 component.yaml 的 $(VERSION) 不一致"; exit 1; fi; \
-	 img_ver="$$(grep -E '^[[:space:]]+image:' component.yaml | head -1 | sed -E 's#.*:([0-9]+\.[0-9]+\.[0-9]+)[[:space:]]*$$#\1#')"; \
-	 if [ "$$img_ver" != "$(VERSION)" ]; then \
-	   echo "✗ deployment.image 的 tag ($$img_ver) 与 component.yaml 的 version ($(VERSION)) 不一致——镜像大概率没有跟着这次版本升级重新构建（实测踩坑记录类别 F）"; exit 1; fi; \
-	 echo "✓ version=$(VERSION)（git tag 与 deployment.image 一致）"
+##@ 门禁
+check-version:  ## metadata.version、go.mod 的主版本、HEAD 上的 tag 三者一致
+	@test -n "$(VERSION)" || { echo "✗ component.yaml 里读不到 metadata.version"; exit 1; }
+	@mod="$$(head -1 go.mod | awk '{print $$2}')"; \
+	 if [ "$(MAJOR)" -ge 2 ] && [ "$${mod##*/}" != "v$(MAJOR)" ]; then \
+	   echo "✗ version $(VERSION) 的主版本是 $(MAJOR)，go.mod 的模块路径应以 /v$(MAJOR) 结尾（实际 $$mod）"; exit 1; fi
+	@tags="$$(git tag --points-at HEAD | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$$' || true)"; \
+	 if [ -n "$$tags" ]; then \
+	   for want in "$(VERSION)" "v$(VERSION)"; do \
+	     echo "$$tags" | grep -qx "$$want" || { echo "✗ HEAD 有版本 tag（$$(echo $$tags)），但缺 $$want：Go 组件要 $(VERSION) 与 v$(VERSION) 两个 tag 在同一提交"; exit 1; }; \
+	   done; \
+	   extra="$$(echo "$$tags" | grep -vx -e "$(VERSION)" -e "v$(VERSION)" || true)"; \
+	   [ -z "$$extra" ] || { echo "✗ HEAD 上的版本 tag $$extra 与 component.yaml 的 $(VERSION) 不一致"; exit 1; }; \
+	 fi
+	@echo "✓ version=$(VERSION)（go.mod 主版本一致；HEAD 上没有 tag，或 $(VERSION) 与 v$(VERSION) 都在）"
 
-test:  ## 需要 TEST_PG_DSN 与 TEST_NATS_URL（可选，缺省走 nats.DefaultURL）
+test:  ## L1–L3 测试。需要 TEST_PG_DSN（指向 brickkit_test_db）；TEST_NATS_URL 可选
 	go test ./... -race -count=1
 
-image:  ## 建镜像并确认里面有 sh + wget（§12.3.7 健康检查需要）
-	docker build -t $(IMAGE):$(VERSION) .
-	@# 镜像里必须有 /bin/sh + wget，否则平台的 CMD-SHELL 健康检查永远失败，
-	@# 症状是「组件日志写着已就绪，而平台说它不健康」（§12.3.7）
-	@docker run --rm --entrypoint sh $(IMAGE):$(VERSION) -c 'wget --version >/dev/null' \
-	  && echo "✓ 镜像里有 sh + wget"
+migrate-idempotent:  ## 同一份迁移连跑两次都成功。需要 PG_HOST PG_PORT PG_DATABASE PG_USER PG_PASSWORD PG_SCHEMA（以 mdm_customer_rw 登录）
+	@# 例：PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer_rw \
+	@#     PG_PASSWORD=… PG_SCHEMA=mdm_customer make migrate-idempotent
+	@mkdir -p build && go build -o build/migrate-probe ./backend/cmd/migrate
+	@build/migrate-probe up && build/migrate-probe up && echo "✓ 迁移幂等"
 
-migrate-idempotent:  ## 同一份迁移连跑两次都必须成功（§13.3 铁律五）
-	@# 需要 DATABASE_HOST/PORT/USER/PASSWORD/NAME + PG_SCHEMA（平台真实注入
-	@# 的分离变量契约，与上面 test 用的单个 TEST_PG_DSN 是两套不同约定——
-	@# 迁移是平台生成的独立容器在跑，模拟的必须是平台自己的注入形态）。
-	@# 本地跑迁移要用 postgres 超级用户（不是 mdm_customer_rw）：分区维护
-	@# 之类的 DDL 需要建表权限，平台生成的迁移容器同样用管理凭据连库。
-	@go build -o /tmp/migrate-probe ./backend/cmd/migrate
-	@/tmp/migrate-probe up && /tmp/migrate-probe up && echo "✓ 迁移幂等"
+dag-check:  ## 没有任何依赖：mdm 是被所有人读、自己不调任何人的主数据
+	@n="$$(python3 -c 'import yaml; m = yaml.safe_load(open("component.yaml")); print(len((m.get("dependencies") or {}).get("components") or []))')"; \
+	 [ "$$n" = 0 ] || { echo "✗ dependencies.components 应为空（实际 $$n 条）：主数据组件加一条依赖，就从被读的一端变成了链上一环"; exit 1; }
+	@echo "✓ 无依赖，无环"
 
-dag-check:  ## 强依赖图无环（§4.2）。mdm 是只读枢纽，依赖为空，天然无环
-	@# ⚠️ 没有照抄计划原文的 "grep -A5 'components:' | grep -c '^\s*-\s'"——
-	@# component.yaml 实际写法是同行内联 "components: []"，-A5 的向后看窗口
-	@# 会把 dependencies.resources 列表的 "- { kind: ... }" 一起数进去，
-	@# 假阳性报出 2 条依赖（实测：本该是 0）。改成直接判内联空数组。
-	@if ! grep -qE '^\s*components:\s*\[\]' component.yaml; then \
-	   echo "✗ mdm 是只读枢纽，dependencies.components 必须为空（§2.6）"; exit 1; fi
-	@echo "✓ 无强依赖，无环"
-
-contract-check:  ## 禁破坏性变更（§8.5、决策 33）
+contract-check:  ## proto 只增不改（buf lint + buf breaking，对比 main）
 	buf lint
 	buf breaking --against '.git#branch=main'
 
-import-scan:  ## 铁律六：不许 import 任何其他组件仓库（§13.3）
-	@# 第二类白名单 github.com/brickKit/<repo>/gen/...：任意组件自己发布的
-	@# 生成物契约包，理由见 erp-sales 的 Makefile 同名注释、设计书 §13.3
-	@# 铁律六新增说明。
+import-scan:  ## 只 import SDK 与自己；别的组件只能用它发布的 gen/ 契约包
 	@bad="$$(go list -deps ./... 2>/dev/null | grep -E '^github.com/brickKit/' \
-	         | grep -vE '^github.com/brickKit/(mdm-customer|be-sdk-go)(/|$$)' \
+	         | grep -vE '^github.com/brickKit/($(REPO)/v$(MAJOR)|be-sdk-go)(/|$$)' \
 	         | grep -vE '^github.com/brickKit/[^/]+/gen/' || true)"; \
 	 if [ -n "$$bad" ]; then \
-	   echo "✗ 铁律六违规，import 了其他组件仓库："; echo "$$bad"; exit 1; fi; \
+	   echo "✗ import 了别的组件的代码："; echo "$$bad"; exit 1; fi; \
 	 echo "✓ 无组件间 import"
 
-module-check:  ## 铁律七：模块能被合进外壳（§12.5、§13.3 铁律七）
-	@# ⚠️ 以下几条只扫 backend/module 与 backend/internal（能被合进外壳的
-	@# 部分）：backend/cmd 是装配用途，允许 os.Getenv（各 cmd 文件顶部有
-	@# 注释说明），且 cmd/migrate 依赖 golang-migrate 自带的 postgres 驱动
-	@# （内部用 lib/pq，是它自己的实现细节，不是本组件业务代码选的驱动，
-	@# 只在一次性迁移容器里跑，从不会被合进外壳）——banned-libs 检查若不
-	@# 缩小范围到 module+internal，会把这条无关依赖也扫出来。
-	@#
-	@# 检查前用 sed 去掉行内 // 注释再 grep：这个代码库的风格本来就大量
-	@# 写"⚠️ 不许 X"这类解释性注释，逐字扫源码行不去注释，那些注释自己
-	@# 提到的被禁 API 名字会把自己判成违规（实测：module.go 里解释"为什么
-	@# 不许 log.Fatal"的那句注释，原样扫会命中 log.Fatal 这个词本身）。
-	@# 同时排除 _test.go：连库测试用 os.Getenv("TEST_PG_DSN")/sql.Open 是
-	@# 测试基础设施，不是模块运行时代码。
+module-check:  ## 模块能被合进外壳：入口签名对、零 os.Getenv、零进程级初始化、栈合规
+	@# 只扫 backend/module 与 backend/internal（会被合进外壳的部分）；backend/cmd 是
+	@# 独立运行的装配代码，不在范围内。先去掉行内 // 注释再 grep，免得解释"为什么
+	@# 不许 log.Fatal"的注释把自己判成违规；_test.go 不扫（测试自己开库是测试设施）。
 	@grep -qE 'func New\(ctx context\.Context, rt \*besdk\.Runtime\) \(\*besdk\.Module, error\)' \
-	   backend/module/module.go || { echo "✗ module.New 签名与 §12.5.1 不一致"; exit 1; }
+	   backend/module/module.go || { echo "✗ module.New 的签名不对"; exit 1; }
 	@bad=""; \
 	 for f in $$(find backend/module backend/internal -name '*.go' ! -name '*_test.go'); do \
-	   hit="$$(sed 's://.*::' "$$f" | grep -nE 'os\.Getenv|os\.LookupEnv')"; \
+	   hit="$$(sed 's://.*::' "$$f" | grep -nE 'os\.Getenv|os\.LookupEnv|os\.Environ')"; \
 	   [ -n "$$hit" ] && bad="$$bad$$f: $$hit\n"; \
 	 done; \
 	 if [ -n "$$bad" ]; then \
-	   echo "✗ 模块代码里读了进程环境变量（22 个模块会互相顶掉，不报错）："; \
-	   printf '%b' "$$bad"; exit 1; fi
+	   echo "✗ 模块代码读了进程环境变量（进外壳后成员互相覆盖，不报错）："; printf '%b' "$$bad"; exit 1; fi
 	@bad=""; \
 	 for f in $$(find backend/module backend/internal -name '*.go' ! -name '*_test.go'); do \
-	   hit="$$(sed 's://.*::' "$$f" | grep -nE 'log\.Fatal|os\.Exit|signal\.Notify|otel\.SetTracerProvider|promauto\.|prometheus\.MustRegister|gin\.New\(|gin\.Default\(|sql\.Open')"; \
+	   hit="$$(sed 's://.*::' "$$f" | grep -nE 'log\.Fatal|os\.Exit|signal\.Notify|otel\.SetTracerProvider|promauto\.|prometheus\.MustRegister|gin\.New\(|gin\.Default\(|gin\.SetMode|sql\.Open|net\.Listen')"; \
 	   [ -n "$$hit" ] && bad="$$bad$$f: $$hit\n"; \
 	 done; \
 	 if [ -n "$$bad" ]; then \
-	   echo "✗ 模块碰了进程级的东西或自己装配（§12.5.2）："; printf '%b' "$$bad"; exit 1; fi
+	   echo "✗ 模块碰了进程级的东西或自己装配："; printf '%b' "$$bad"; exit 1; fi
 	@bad="$$(go list -deps ./backend/module/... ./backend/internal/... 2>/dev/null \
 	         | grep -E 'labstack/echo|gofiber/fiber|go-chi/chi|jinzhu/gorm|gorm\.io|lib/pq' || true)"; \
 	 if [ -n "$$bad" ]; then \
-	   echo "✗ 用了 §12.4 禁掉的库："; echo "$$bad"; exit 1; fi
-	@echo "✓ 铁律七：入口签名对、零 os.Getenv、零进程级 init、栈合规"
+	   echo "✗ 用了锁定栈之外的库："; echo "$$bad"; exit 1; fi
+	@echo "✓ 入口签名对、零 os.Getenv、零进程级初始化、栈合规"
 
-docs-check:  ## 四份文档结构检查（总纲 §4 SOP-D）
-	@bash ../../../infra/scripts/docs-check.sh mdm-customer
+docs-check:  ## 清单与文档的严格 lint（= 项目根 make docs-check ID=$(ID)）
+	@cd $(ROOT) && brickkit lint --strict $(ID)
 
-smoke:  ## 原则一：只装这一个组件就能起来（§1.5、§3.11 第 8 条）
-	@# 详细动作见 Task 17 的六项验收；这里只做最小闭环。
-	@# ⚠️ brickkit 不向上找 brickkit.yaml，必须从装配仓库根目录跑——本组件
-	@# 固定挂在 components/<scope>/<name>/ 下（本仓库是 components/mdm/
-	@# customer），根目录固定是 ../../..（实测：计划原文这条在同一个
-	@# Makefile 的其他目标都假设 CWD 是组件目录本身的前提下，会因为找不到
-	@# brickkit.yaml 直接报错退出）。
-	@(cd ../../.. && brickkit up --dry-run >/dev/null) && echo "✓ smoke（完整版见 make tier0）"
+##@ 要起容器的检查（在项目里跑）
+smoke:  ## 项目能为本组件生成部署文件（brickkit up --dry-run）
+	@cd $(ROOT) && brickkit up --dry-run >/dev/null && echo "✓ smoke：up --dry-run 通过"
 
-##@ 本地开发数据（总纲 SOP-W-7，仅本地/演示用，不进部署/CI）
-seed:  ## 灌本组件自己的示例客户数据（幂等，可重复跑）。要求本组件容器已经 brickkit up 起来
+image:  ## brickkit build 本组件，并确认镜像里有 sh + wget（健康检查经 /bin/sh 调 wget）
+	@cd $(ROOT) && brickkit build $(ID)
+	@docker run --rm --entrypoint sh $(REPO):$(VERSION) -c 'wget --version >/dev/null && test -f /app/component.yaml' \
+	  && echo "✓ 镜像 $(REPO):$(VERSION) 里有 sh + wget + component.yaml"
+
+##@ 本地开发数据（只给本地 / 演示用，不进部署与 CI）
+seed:  ## 灌本组件的示例客户（幂等，可重复跑）。要求本组件已经 brickkit up 起来
 	@bash scripts/seed.sh
 
 seed-clean:  ## 撤销 seed 灌的数据
