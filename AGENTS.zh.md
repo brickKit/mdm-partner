@@ -38,7 +38,8 @@
 # 测试连测试库 brickkit_test_db，绝不连 brickkit_db（项目根 make test-db-init 准备）
 set -a; . ../../../.env; set +a
 export TEST_PG_DSN="postgres://postgres:${POSTGRES_PASSWORD}@localhost:5432/brickkit_test_db?sslmode=disable"
-make test                    # 每个包都是 "ok"；设了 TEST_PG_DSN 就没有 SKIP
+make test                    # 每个包都是 "ok"；没设 TEST_PG_DSN 直接失败
+go test ./... -count=1 -v | grep -c -- '--- SKIP'   # 0：没有测试被跳过
 make check-version dag-check contract-check import-scan module-check   # 每个打印一行 ✓
 make docs-check              # "0 with errors, 0 warnings"
 # 迁移，以登录角色运行：
