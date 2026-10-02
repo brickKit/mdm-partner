@@ -11,6 +11,8 @@ import (
 	besdk "github.com/brickKit/be-sdk-go"
 	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 func testDB(t *testing.T) *sql.DB {
@@ -216,5 +218,18 @@ func TestCreate_creditLimit为0时允许(t *testing.T) {
 	}
 	if c.CreditLimit != "0.00" {
 		t.Fatalf("期望落库后是 0.00，实际 %q", c.CreditLimit)
+	}
+}
+
+// TestList_非法cursor是调用方的错返回InvalidArgument：游标是客户端原样
+// 回传的字符串，被截断或篡改是调用方传错了参数，应该 400，不是 500。
+func TestList_非法cursor是调用方的错返回InvalidArgument(t *testing.T) {
+	svc, _, _ := newTestService(t)
+	_, err := svc.List(context.Background(), repo.ListInput{Cursor: "不是base64"})
+	if err == nil {
+		t.Fatal("非法 cursor 应该报错")
+	}
+	if code := status.Code(ToStatus(err)); code != codes.InvalidArgument {
+		t.Fatalf("非法 cursor 应映射成 InvalidArgument，实际 %v（%v）", code, err)
 	}
 }

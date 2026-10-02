@@ -82,7 +82,7 @@ func (r *Repo) List(ctx context.Context, in ListInput) (*ListResult, error) {
 	if q.Cursor != "" {
 		decoded, err := decodeCursor(q.Cursor)
 		if err != nil {
-			return nil, fmt.Errorf("非法 cursor：%w", err)
+			return nil, fmt.Errorf("%w：%v", ErrInvalidCursor, err)
 		}
 		ck = &decoded
 	}
