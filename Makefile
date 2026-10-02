@@ -37,7 +37,7 @@ test:  ## L1–L3 测试。需要 TEST_PG_DSN（指向 brickkit_test_db）；TES
 	go test ./... -race -count=1
 
 migrate-idempotent:  ## 同一份迁移连跑两次都成功。需要 PG_HOST PG_PORT PG_DATABASE PG_USER PG_PASSWORD PG_SCHEMA（以 mdm_customer_rw 登录）
-	@# 例：PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer_rw \
+	@# 例：PG_HOST=localhost PG_PORT=5432 PG_DATABASE=brickkit_test_db PG_USER=mdm_customer_rw
 	@#     PG_PASSWORD=… PG_SCHEMA=mdm_customer make migrate-idempotent
 	@mkdir -p build && go build -o build/migrate-probe ./backend/cmd/migrate
 	@build/migrate-probe up && build/migrate-probe up && echo "✓ 迁移幂等"
@@ -47,9 +47,13 @@ dag-check:  ## 没有任何依赖：mdm 是被所有人读、自己不调任何�
 	 [ "$$n" = 0 ] || { echo "✗ dependencies.components 应为空（实际 $$n 条）：主数据组件加一条依赖，就从被读的一端变成了链上一环"; exit 1; }
 	@echo "✓ 无依赖，无环"
 
-contract-check:  ## proto 只增不改（buf lint + buf breaking，对比 main）
+contract-check:  ## proto 只增不改（buf lint + buf breaking，对比上一个发布 tag；还没有发布过就对比 main）
+	@# 对比 main 抓不住已经提交到 main 上的破坏性改动（在 main 上工作时等于自己比自己），
+	@# 所以对比上一个组件版本 tag（契约包的 gen/* tag 不算）。
 	buf lint
-	buf breaking --against '.git#branch=main'
+	@base="$$(git describe --tags --abbrev=0 --exclude 'gen/*' 2>/dev/null)"; \
+	 against="$${base:+.git#tag=$$base}"; against="$${against:-.git#branch=main}"; \
+	 echo "buf breaking --against '$$against'"; buf breaking --against "$$against"
 
 import-scan:  ## 只 import SDK 与自己；别的组件只能用它发布的 gen/ 契约包
 	@bad="$$(go list -deps ./... 2>/dev/null | grep -E '^github.com/brickKit/' \
