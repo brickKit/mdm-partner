@@ -14,12 +14,11 @@ import (
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
 	"google.golang.org/grpc"
 
-	grpcapi "github.com/brickKit/mdm-customer/backend/internal/grpc"
-	httpapi "github.com/brickKit/mdm-customer/backend/internal/http"
-	"github.com/brickKit/mdm-customer/backend/internal/partition"
-	"github.com/brickKit/mdm-customer/backend/internal/repo"
-	"github.com/brickKit/mdm-customer/backend/internal/service"
-	"github.com/brickKit/mdm-customer/migrations"
+	grpcapi "github.com/brickKit/mdm-customer/v2/backend/internal/grpc"
+	httpapi "github.com/brickKit/mdm-customer/v2/backend/internal/http"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/partition"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
 )
 
 // New 构造 mdm-customer 模块。签名一个字都不许改（§12.5.1）——62 个
@@ -28,7 +27,7 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 	// ⚠️ 配置只从 rt.Config 来，模块里零 os.Getenv（§12.5.3、决策 110）。
 	// 一个进程只有一份 environ：合并后 22 个模块的 PG_SCHEMA 会互相顶掉，
 	// 不报错，模块按别人的 schema 建表写数据。
-	schema := rt.Config.StringOr("pgSchema", "mdm_customer")
+	schema := rt.Config.StringOr("PG_SCHEMA", "mdm_customer")
 	role := schema + "_rw"
 
 	// ⚠️ 池从 rt.DB 来，不许自己 sql.Open（§13.3 铁律二）。
@@ -53,8 +52,6 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 		RegisterGRPC: func(gs *grpc.Server) {
 			customerv1.RegisterCustomerServiceServer(gs, grpcapi.New(svc))
 		},
-
-		Migrations: migrations.FS, // 合并态由外壳按拓扑顺序跑（§13.3 铁律五）
 
 		// 后台循环：Outbox 推送 + 分区自动维护（决策 54：跨月/跨周时分区
 		// 不存在会写崩）。⚠️ 两个循环必须并发跑，不能顺序调用——

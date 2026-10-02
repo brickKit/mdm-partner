@@ -17,8 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/mdm-customer/backend/internal/repo"
-	"github.com/brickKit/mdm-customer/backend/internal/service"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
 )
 
 // RegisterRoutes 挂载业务路由。eng 已经是 besdk.NewGinEngine 产出的、

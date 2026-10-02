@@ -1,62 +1,40 @@
-# mdm-customer · AI 助手导读
+[English](AGENTS.md) · [中文](AGENTS.zh.md)
 
-## 身份证
+# mdm/customer
 
-| 项 | 值 |
-|---|---|
-| 组件 ID | `mdm/customer` |
-| 仓库名 | `mdm-customer` |
-| 端口 | HTTP `8080` / gRPC `9090`（`registry/ports.tsv`，装配仓库根目录那份） |
-| schema / role | `mdm_customer` / `mdm_customer_rw`（归档 schema `mdm_customer_archive` 建了但不用，见设计计划 §7） |
-| 语言 / 框架 | Go：Gin + `database/sql` + `pgx/v5/stdlib` + `sqlc` + `golang-migrate` |
-| 合并部署时进 | 外壳一 `go-core` |
-| 装配角色 | `default` |
-| 设计真相源 | 装配仓库 `docs/design/mdm-customer.md`——本文件与它冲突时，以那份为准，回来改这里 |
+The AI guide to developing this component. How to use it, its boundaries and contracts: BRICKKIT.md. Dependencies, configuration and deployment: component.yaml.
 
-## 边界
+## Code map
 
-**归我：** 客户名称、税号、信用额度、状态（草稿/启用/停用）、联系人、开票信息——这四类数据的唯一真相源。
+<!-- TODO: two tables — "Path / Owns" (paths in backticks, directories ending in /) and "Feature / Start here / Then"; brickkit lint checks every path exists -->
 
-**不归我：**
-- 客户在销售流程中的**归属关系**（公海/私海/负责人）与**跟进状态**：归 `crm-customer`，它只存本组件主键的外键 + 摘要副本（设计书 §5.4）
-- 客户与订单/发票的交易记录：归 `erp-sales` / `erp-finance`
+## Build and test
 
-`data_scopes: none`（设计书 §14.2.2：`mdm` 4 个组件全部 `none`）——客户主数据全员可见，不做行级过滤。
+<!-- TODO: the exact commands to build, test, run locally and check the contract, and what success looks like -->
 
-## 契约面与事件
+## Design decisions
 
-**gRPC `mdm.customer.v1.CustomerService`：** `Create` / `Update` / `SetStatus` / `AddContact`（命令）、`Get` / `List` / `BatchGet` / `GetSummary`（读）。`BatchGet` 是 BFF 层防 N+1 的唯一合法调用方式，任何时候都不许删掉它只留 `Get`。
+<!-- TODO: why it does not depend on some other component; alternatives rejected and why — longer reasoning goes in docs/ and is linked here -->
 
-**REST 前缀：** `/mdm/customer/**`。`BatchGet` 不暴露到 REST——它是给其他组件 gRPC 客户端用的批量读优化，不是终端用户的操作。
+## Pitfalls
 
-⚠️ **六条 REST 路由目前全部标 `besdk.Public`**（阶段二 Task 1）——这是刻意的临时状态，不是漏填权限键：阶段三 `infra-authz` 上线前 `RequirePermission` 是 fail-closed stub，标真键会让这六条在 stub 下全部 403。**阶段三上线后要回来把它们改成 `assembly.yaml` 里对应的真实权限键**（`mdm.customer.view`/`create`/`edit`），改完这条注释和 `http.go` 里对应的注释一起删。
+<!-- TODO: a table: Never / Symptom / Why — only what is specific to this component; project-wide rules stay in the project's AGENTS.md -->
 
-**发布事件：** `mdm.customer.created.v1` / `.updated.v1` / `.disabled.v1`，全部走 Outbox，下游按 `version` 单向递增更新摘要副本。
+## Before changing code
 
-**消费事件：** 无——消费一条就是在给只读枢纽加一条依赖边。
+<!-- TODO: 3 to 8 checks to run before changing code here -->
 
-## 依赖与「为什么不依赖某某」
+<!-- brickkit:managed:begin lang=en -->
+<!-- maintained by brickkit (init, add, remove, upgrade, skills update): edits between these markers are overwritten -->
 
-`dependencies.components` 永远是空数组。
+## BrickKit
 
-- **不依赖任何业务组件**：`mdm` 是只读枢纽，被所有人读、自己不调任何人（设计书 §2.6 三枢纽）。这不是"暂时没有依赖"，是这个组件存在的设计前提——加一条进去，枢纽就变成了链上一环。
-- **不依赖 `infra-iam-casdoor`**：IAM 走 JWT 本地验签（决策 87），只需要 `iamJwksUrl` 拉公钥，不构成依赖边。
-- **不依赖事件总线（NATS）作为组件**：走 `resources` 注入（`kind: mq`），它是基础资源不是组件（设计书 §2.7.0 形态 A）。
+This is a BrickKit component: `component.yaml` is all the platform reads. The rules it relies on:
 
-## 这个组件特有的坑
-
-| 不许 | 症状 | 出处 |
-|---|---|---|
-| 给 `dependencies.components` 加任何一条 | 编译、启动、测试全都正常——**没有任何症状**。但 `mdm` 从只读枢纽变成了链上一环，下一个人照着加第二条，同步图迟早成环 | §2.6、§4.2 |
-| 省掉 `BatchGet` 只留 `Get` | 单测照样绿。但 BFF 的 GraphQL Resolver 只能退化成循环调 `Get` 的瀑布流，10 个订单查客户就是 10 次 RPC | §3.8、决策 23 |
-| 把 `customers`/`contacts`/`billing_infos` 建成分区表，或往里塞归档逻辑 | 迁移能跑通、代码能编译——但这三张表是主数据不是交易流水，§11.2.5 的分区大表清单里没有 `mdm-*`；建成分区表之后回头想撤销，代价是一次真实的数据迁移 | 设计计划 §7 |
-| 往 `contacts`/`billing_infos` 加 `owner_id`/`dept_path` 这类数据权限列 | 建表能过，迁移能跑——但本组件 `data_scopes: none`，加了这些列没有任何代码会去用它们过滤，纯粹是死配置，且与"客户主数据全员可见"的设计矛盾 | §14.2.2、§14.2.5 |
-| `Create` 插入成功后直接用调用方传入的原始字符串回填 `CreditLimit`，不 `RETURNING` 读回落库后的值 | 正常输入（本来就带两位小数）测不出来——`credit_limit` 传 `"0"` 时 `Create` 的响应体是 `"0"`，但同一条记录随后 `Get`/`List` 读到的是 `NUMERIC(18,2)` 规整过的 `"0.00"`，两次读到的同一个字段不一致 | Task 16 L3 测试 `TestCreate_creditLimit为0时允许` 测出来的，已修（两个 `INSERT` 分支的 `RETURNING` 都加了 `credit_limit`） |
-| 往 `configSchema` 里声明一个配置项，却不在代码里接它 | `component.yaml` 生成的 compose 照样注入这个环境变量、`up` 一路绿灯——症状不是报错，是**别人改了这个配置项的值，行为完全没变**。本组件真实踩过：`defaultPageSize`/`listWindowDays` 声明了却从没接（`List` 的默认页大小/时间窗口其实是 `be-sdk-go` 的包级常量），`defaultPageSize` 写的默认值 `20` 还跟实际生效的 `50` 对不上，两条都已删除 | Task 18 校准文档时发现，见 `component.yaml` 里对应注释 |
-
-## 改代码前的自查
-
-1. **我是不是在给这个组件加一条 `dependencies.components`？** 停下——先回设计计划确认这条边是不是真的必要，几乎总是不必要（见上表第一条）。
-2. **我写的这段逻辑，是不是应该属于 `crm-customer`（销售归属关系）而不是这里？** 判据：这段逻辑改变的是"客户是谁"还是"谁在跟这个客户打交道"——前者归这里，后者归 `crm-customer`。
-3. **我是不是在给这三张表加分区/归档/数据权限列？** 停下——设计计划 §7、§14.2.2 已经判定不需要，除非设计计划本身先改。
-4. **这个改动会不会让 `contracts/customer.proto` 出现破坏性变更（删字段、改类型、改 Tag 编号）？** 下游 `erp-sales`/`crm-*` 都消费这份契约，签名一旦发布只能向后兼容地追加（§3.4 铁律 3）。
+- `configSchema` keys are the environment variable names the code reads. Never use a reserved name: `COMPONENT_ID`, `COMPONENT_VERSION`, `PORT`, `BRICKKIT_SERVED_MEMBERS`, `BRICKKIT_SERVED_MEMBERS_CONFIG`, or any `*_ENDPOINT`.
+- Dependencies are exact versions. A dependency's address arrives as `<ID>_ENDPOINT`; an optional dependency that is absent has no variable at all, so read it with a fallback.
+- `/healthz` checks only this process, never a dependency. The migration command runs from the same image and must fail on an argument it does not know.
+- `BRICKKIT.md` travels to every project that uses this component and is read there without the repository: keep it in step with the code, with no relative links.
+- Release: raise `metadata.version`, commit, push, `brickkit release`. `brickkit lint` checks the manifest and these docs — inside a project, run in this directory, it checks only this component (`--all` for the whole project).
+- The full rules are in the `brickkit-component` skill (`.claude/skills/brickkit-component/SKILL.md` at the root of the project or repository where skills are installed; `brickkit skills update` installs it); for flags ask `brickkit <command> --help`; BrickKit's own documentation is `brickkit docs`.
+<!-- brickkit:managed:end -->

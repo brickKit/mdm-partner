@@ -12,7 +12,7 @@ import (
 	"log/slog"
 	"strconv"
 
-	"github.com/brickKit/mdm-customer/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
 )
 
 // ErrInvalidArgument 是入参本身不合法（不是数据库层面的冲突/缺失），

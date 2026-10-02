@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/mdm-customer/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 

@@ -13,8 +13,8 @@ import (
 
 	customerv1 "github.com/brickKit/mdm-customer/gen/mdm/customer/v1"
 
-	"github.com/brickKit/mdm-customer/backend/internal/repo"
-	"github.com/brickKit/mdm-customer/backend/internal/service"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/repo"
+	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
 )
 
 type server struct {

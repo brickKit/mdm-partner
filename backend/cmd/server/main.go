@@ -2,7 +2,7 @@ package main
 
 import (
 	besdk "github.com/brickKit/be-sdk-go"
-	"github.com/brickKit/mdm-customer/backend/module"
+	"github.com/brickKit/mdm-customer/v2/backend/module"
 )
 
 // ⚠️ 这个文件永远只有这一行。装配的全部逻辑（Bootstrap OTel、开池、连
