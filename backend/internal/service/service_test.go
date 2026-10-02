@@ -62,12 +62,8 @@ func TestUpdate_版本不一致时拒绝(t *testing.T) {
 	}
 }
 
-// TestSetStatus_两个方向都允许流转 ⚠️ 没有照抄计划原文的
-// "只允许单向演进"（DISABLED 是终态，ACTIVE→DISABLED 允许、
-// DISABLED→ACTIVE 拒绝）——那与设计计划 §3 的修正记录矛盾：
-// disabled 不是终态，客户后续可能重新建立业务关系，允许流转回 active
-// （与设计计划 §7"不归档"的结论保持一致：真有终态才需要归档判据）。
-// 以设计计划为准，这里改成两个方向都允许，各自只受乐观锁约束。
+// TestSetStatus_两个方向都允许流转：DISABLED 不是终态，客户可能重新建立业务
+// 关系，允许流转回 ACTIVE；两个方向都只受乐观锁约束。没有终态，也就没有归档。
 func TestSetStatus_两个方向都允许流转(t *testing.T) {
 	svc, r, _ := newTestService(t)
 	ctx := context.Background()
@@ -124,13 +120,10 @@ func TestSetStatus_停用时发出disabled事件(t *testing.T) {
 	}
 }
 
-// TestSetStatus_重新启用时发出updated事件而不是专门事件 ⚠️ 补的测试，不在
-// 计划原文里——但直接由上面那条"两个方向都允许"的修正带出来：事件清单
-// （contracts/events/customer.events.json）里只声明了 created/updated/
-// disabled 三个 subject，没有 "enabled"。重新启用没有自己的专门事件，
-// 复用 updated（它的 payload 本来就带 status 字段）——不能在实现时顺手
-// 发明一个新 subject，那要先回契约与设计计划走一遍决策 19（事件只增不删
-// 不改）的流程。
+// TestSetStatus_重新启用时发出updated事件而不是专门事件：事件契约
+// （contracts/events/customer.events.json）只有 created / updated / disabled，
+// 没有 "enabled"。重新启用复用 updated（payload 带 status）；新增 subject 要先
+// 改契约，不能在实现里顺手发明。
 func TestSetStatus_重新启用时发出updated事件而不是专门事件(t *testing.T) {
 	svc, r, db := newTestService(t)
 	ctx := context.Background()
@@ -166,11 +159,8 @@ func TestSetStatus_重新启用时发出updated事件而不是专门事件(t *te
 	}
 }
 
-// ⚠️ L3 补充测试（Task 16 步骤 3.5）。计划原文给的例子是"Create 传空
-// code → InvalidArgument"，但 code 留空是设计计划 §9 定的自动编号触发
-// 条件（见 repo_test.go 的 TestCreate_code留空时自动生成），不是错误——
-// 那条例子本身与已经确认的设计矛盾（自查第 0 条：L2 结论挡路几乎总是
-// 例子/理解错了，不是反过来）。改验真正没有兜底的必填字段 name。
+// name 是唯一没有兜底的必填字段（code 留空会自动编号，见 repo_test.go 的
+// TestCreate_code留空时自动生成），校验必须发生在落库之前。
 func TestCreate_name为空时拒绝且不落库(t *testing.T) {
 	svc, _, db := newTestService(t)
 	ctx := context.Background()

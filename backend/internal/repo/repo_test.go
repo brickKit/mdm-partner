@@ -11,19 +11,11 @@ import (
 	"time"
 
 	besdk "github.com/brickKit/be-sdk-go"
-	_ "github.com/jackc/pgx/v5/stdlib" // §12.4：不用 lib/pq，驱动名注册为 "pgx"
+	_ "github.com/jackc/pgx/v5/stdlib" // 与 SDK 同一个驱动（不用 lib/pq），驱动名注册为 "pgx"
 )
 
-// ⚠️ 计划原文这里写的是 lib/pq——那个驱动已经在 be-sdk-go 的 Task 7 里
-// 确认踩过坑并改掉了（§12.4 锁定表明确禁止），这里跟着 be-sdk-go 统一用
-// pgx/v5/stdlib，不重蹈覆辙。
-//
-// ⚠️ 计划原文还给了一个 health_test.go（NewHealthHandler，签名不接受任何
-// 依赖参数）。没有照抄：be-sdk-go 的 NewGinEngine 已经挂了 /healthz（零
-// 依赖、恒 200），且 be-sdk-go 自己的 TestNewGinEngine_healthz不查依赖
-// 已经覆盖了这条断言。组件自己再写一个等价的 handler 只是重复测试同一件
-// 事，而且如果真去注册它，会和 NewGinEngine 已经注册的 /healthz 路由冲突
-// （Gin 对同一 method+path 重复注册会直接 panic）。
+// 这里没有 /healthz 的测试：它由 be-sdk-go 的 NewGinEngine 挂好（不查任何依赖），
+// 由 SDK 自己的测试守；组件再注册一个同路径的 handler，Gin 会在启动时 panic。
 
 func testDB(t *testing.T) *sql.DB {
 	t.Helper()
@@ -39,10 +31,7 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// ⚠️ 补的测试，不在计划原文里：设计计划 §9 待决问题 2 定的规则是
-// "code 留空则自动生成 C + 6 位自增数字"，但这条规则只写在设计文档和
-// 字段注释里，一直没有真正的测试守着——写代码时才发现 Create 压根没
-// 实现这段逻辑，只是把空字符串原样插进了 NOT NULL 列。
+// code 留空时自动生成 "C" + 6 位数字；显式传入时按传入的用（导入场景）。
 func TestCreate_code留空时自动生成(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -81,14 +70,11 @@ func TestCreate_幂等(t *testing.T) {
 	}
 }
 
-// TestCreate_事件与业务数据同事务 验证 §3.10 的 Outbox Pattern：业务写入
-// 与 PublishOutbox 必须在同一事务里，任一方失败两边都不许留下痕迹。
+// TestCreate_事件与业务数据同事务 验证 Outbox：业务写入与 PublishOutbox 在
+// 同一事务里，任一方失败两边都不留痕迹。
 //
-// ⚠️ 没有照抄计划原文的 r.CreateWithInjectedFailure——那等于往生产代码的
-// 公开 API 上永久挂一个只为测试存在的方法，其他组件抄这份骨架时会把它
-// 当成正常方法一起抄走。改用本包内部的 testHookAfterOutbox（未导出，见
-// repo.go）：只有同包的 _test.go 摸得到，编译进生产二进制里是个永远为 nil
-// 的变量，不占公开 API 一个字。
+// 故障注入用包内未导出的 testHookAfterOutbox（见 write.go），不在公开 API 上
+// 挂只为测试存在的方法：生产二进制里它永远是 nil。
 func TestCreate_事件与业务数据同事务(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -114,7 +100,7 @@ func TestCreate_事件与业务数据同事务(t *testing.T) {
 		t.Fatal(err)
 	}
 	if n != 0 {
-		t.Fatalf("业务回滚了但 outbox 留了 %d 条——说明事件不在同一事务里（§3.10）", n)
+		t.Fatalf("业务回滚了但 outbox 留了 %d 条——说明事件不在同一事务里", n)
 	}
 
 	var m int
@@ -130,12 +116,9 @@ func TestCreate_事件与业务数据同事务(t *testing.T) {
 	}
 }
 
-// ⚠️ 补的测试，不在计划原文里：AddContact 的 customer_id 是从
-// Customer.ID（string）传下来的，插的是 contacts.customer_id（bigint）
-// 列——之前在 BatchGet 上怀疑过 string 参数绑定 bigint 列会报类型不匹配
-// （查证后发现是自己manual psql PREPARE 的方式不对，pgx 实际按上下文推断
-// 参数类型，不会报错），这里顺手用真库验证 AddContact 这条路径同样没事，
-// 不必每次都靠"应该没问题"的推断。
+// AddContact 的 customer_id 是从 Customer.ID（string）传下来的，插的是
+// contacts.customer_id（bigint）列：用真库确认 pgx 按上下文推断参数类型，
+// string 绑定 bigint 列不报错，并顺带验证幂等。
 func TestAddContact_customer_id按字符串传也能正常插入(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -170,10 +153,9 @@ func TestAddContact_customer_id按字符串传也能正常插入(t *testing.T) {
 	}
 }
 
-// TestBatchGet_缺失的id不报错 测的不是 besdk.BatchGetRouted 本身（那是
-// be-sdk-go 自己的 TestBatchGetRouted_热表命中_归档缺失都覆盖 在管）——
-// 这里测的是 mdm-customer 把它接对了：用真的 customers 表、真的 scan
-// 函数，缺失的 id 确实不报错、确实被分类进 missing。
+// TestBatchGet_缺失的id不报错 测的不是 besdk.BatchGetRouted 本身（SDK 自己的
+// 测试守），而是本组件把它接对了：真的 customers 表、真的扫描函数，缺失的 id
+// 不报错、被分类进 missing。
 func TestBatchGet_缺失的id不报错(t *testing.T) {
 	db := testDB(t)
 	r := New(db, "mdm_customer_rw", "mdm_customer")
@@ -186,14 +168,12 @@ func TestBatchGet_缺失的id不报错(t *testing.T) {
 	}
 }
 
-// TestList_未传时间范围时自动注入90天窗口 测的不是 besdk.ListWindow 本身
-// （那是 be-sdk-go 自己的 TestListWindow_未传时间范围时自动注入最近90天
-// 在管）——这里测的是 mdm-customer 的 List 真的调用了它，不是自己拼了一套
-// 平行逻辑。buildListQuery 未导出，只在包内可见，不需要真连库就能测。
+// TestList_未传时间范围时自动注入90天窗口 测的不是 besdk.ListWindow 本身（SDK
+// 自己的测试守），而是本组件的 List 真的经过它，没有自己另拼一套逻辑。不连库。
 func TestList_未传时间范围时自动注入90天窗口(t *testing.T) {
 	q := buildListQuery(ListInput{PageSize: 20}) // 不传 CreatedAfter/CreatedBefore
 	if q.From.IsZero() || q.To.IsZero() {
-		t.Fatal("框架层必须自动注入默认时间窗口，否则用户无条件查询会拖垮数据库（§11.4.1）")
+		t.Fatal("必须自动注入默认时间窗口，否则无条件的列表查询会扫全表")
 	}
 	days := q.To.Sub(q.From).Hours() / 24
 	if days < 89 || days > 91 {
@@ -201,10 +181,8 @@ func TestList_未传时间范围时自动注入90天窗口(t *testing.T) {
 	}
 }
 
-// TestList_最后一页返回空nextCursor而不是报错 是 L3（Task 16 步骤 3.5）：
-// SQL 里"多取一条判断有没有下一页"这段逻辑（List 实现里的
-// len(customers) > q.Limit 分支）只有真的跑到最后一页才会走到 else
-// 分支，不靠真库测不出来。
+// TestList_最后一页返回空nextCursor而不是报错：List 多取一条判断有没有下一页，
+// "没有多出来那一条"的分支只有真的翻到最后一页才走得到，要真库才测得出来。
 func TestList_最后一页返回空nextCursor而不是报错(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -230,10 +208,7 @@ func TestList_最后一页返回空nextCursor而不是报错(t *testing.T) {
 
 // TestCreate_creditLimit超出精度时报错且不落库 是 L3 边界值测试：
 // NUMERIC(18,2) 最多 16 位整数 + 2 位小数，17 位整数部分必然溢出。
-// ⚠️ 不是"先插入、报错后在 Go 层选择忽略"——这里验证的是相反方向：
-// 数据库真的报错时，事务必须整体回滚，不能留下部分痕迹（同 A4e 那条
-// 踩坑：一条语句真失败之后整个事务已经 aborted，这里确认业务行确实
-// 没有留下来，不是重复造轮子去验证 PostgreSQL 自己的行为）。
+// 数据库报错时整个事务回滚，不留下部分写入（幂等键、Outbox 都不留）。
 func TestCreate_creditLimit超出精度时报错且不落库(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
@@ -259,15 +234,12 @@ func TestCreate_creditLimit超出精度时报错且不落库(t *testing.T) {
 	}
 }
 
-// TestCreate_并发相同idempotencyKey只落一条 是 L3 并发测试（-race 下跑）。
-// ⚠️ Code 故意留空（走 nextval 自动编号）：如果两个并发请求用同一个显式
-// code，会在 customers_code_uniq 上先撞车，测的就变成"code 唯一约束"
-// 而不是"idempotency_key 去重"本身——两件事要分开验。
-// command_idempotency.idempotency_key 是 PRIMARY KEY（见 002 迁移），
-// 并发下"后提交的那个"会在这张表上拿到唯一约束冲突而整体回滚（包含它
-// 自己插入的那条 customers 行），所以无论多少个并发请求，落地的
-// customers 行永远只有 1 条——这条断言不要求每个并发调用都成功返回，
-// 只要求最终状态只有 1 条，这是设计计划对"幂等"的实际承诺。
+// TestCreate_并发相同idempotencyKey只落一条 是并发测试（-race 下跑）。
+// Code 故意留空（走自动编号）：同一个显式 code 会先在 customers_code_uniq 上
+// 撞车，测的就成了"code 唯一"而不是"幂等键去重"。
+// command_idempotency.idempotency_key 是主键，并发下后提交的那个撞主键、整个
+// 事务回滚（连同它插入的 customers 行），所以最终只落 1 条。断言不要求每个并发
+// 调用都成功返回，只要求最终状态只有 1 条——这就是"幂等"承诺的内容。
 func TestCreate_并发相同idempotencyKey只落一条(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()

@@ -48,9 +48,8 @@ func testDB(t *testing.T) *sql.DB {
 	return db
 }
 
-// TestEnsureAll_建当前周分区且连跑两次都成功 验证两件事：真的建出了
-// 分区（不是只算出了名字没执行），以及幂等（迁移必须能连跑两次，
-// §13.3 铁律五，分区维护同理——第二次跑到的应该已经是"分区存在，跳过"）。
+// TestEnsureAll_建当前周分区且连跑两次都成功 验证两件事：真的建出了分区
+// （不是只算出了名字），以及幂等——第二次跑到的应该是"分区已存在，跳过"。
 func TestEnsureAll_建当前周分区且连跑两次都成功(t *testing.T) {
 	db := testDB(t)
 	ctx := context.Background()
