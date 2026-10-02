@@ -1,9 +1,8 @@
-// Package grpc 实现 mdm.customer.v1.CustomerService——内部 gRPC 面（§2.1）。
+// Package grpc 实现 mdm.customer.v1.CustomerService：别的组件调本组件走这里。
 // HTTP 与 gRPC 共用同一个 service.Service，业务逻辑只写一遍。
 //
-// ⚠️ 与 backend/internal/http 同样的已知范围缩减：Customer 消息里的
-// contacts/billing_infos 数组目前总是空的（AddContact 写得进去，但读
-// 路径还没有联查），留到后续任务补聚合查询。
+// 与 REST 一样，Customer 消息里的 contacts / billing_infos 目前总是空的
+// （读路径还没有联查，docs/design.md 的未决问题）。
 package grpc
 
 import (
@@ -127,7 +126,7 @@ func (s *server) List(ctx context.Context, req *customerv1.ListRequest) (*custom
 	return &customerv1.ListResponse{Customers: customers, NextCursor: out.NextCursor}, nil
 }
 
-// BatchGet 是 BFF 层 GraphQL Resolver 防 N+1 的唯一合法调用方式（§3.8）。
+// BatchGet 是调用方防 N+1 的读法：一个列表页里的 N 个客户一次取回，不要循环调 Get。
 func (s *server) BatchGet(ctx context.Context, req *customerv1.BatchGetRequest) (*customerv1.BatchGetResponse, error) {
 	found, missing, err := s.svc.BatchGet(ctx, req.Ids)
 	if err != nil {

@@ -1,13 +1,10 @@
-// Package http 是 mdm-customer 的 REST 面（对外路径前缀 /mdm/customer，
-// 与 assembly.yaml 的 edge_routes 一致）。/healthz、/metrics 已经由
-// besdk.NewGinEngine 统一挂好（零依赖、恒 200，§12.3.6），这里不重复挂、
-// 也不写进 contracts/customer.openapi.yaml（那条契约按 servers:
-// /mdm/customer 为前缀，写进去会隐含错误的路径）。
+// Package http 是 mdm-customer 的 REST 面（路径前缀 /mdm/customer，与
+// assembly.yaml 的 edge_routes 一致）。/healthz、/metrics 由
+// besdk.NewGinEngine 挂好，这里不重复挂，也不写进 openapi（契约以
+// /mdm/customer 为前缀，写进去会暗示错误的路径）。
 //
-// ⚠️ 已知的范围缩减：这里返回的 Customer 不含 contacts/billing_infos
-// 数组（AddContact 写得进去，但 Get/List/BatchGet 目前不会把它们
-// 联查出来）——这是有意义的简化，不是漏了没做，留到后续任务再补上
-// 聚合查询。
+// 返回的 Customer 不含 contacts / billing_infos 数组：AddContact 写得进去，
+// 读路径还没有联查（docs/design.md 的未决问题）。
 package http
 
 import (
@@ -23,13 +20,9 @@ import (
 	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
 )
 
-// RegisterRoutes 挂载业务路由。eng 已经是 besdk.NewGinEngine 产出的、
-// 挂好中间件的 engine——这里只负责注册业务 handler。
-//
-// 阶段三 Task 6：权限键从阶段二的 besdk.Public 换成 assembly.yaml 里
-// 声明的真实键——判定本体已在 Task 5 换成真实 bundle 查找，这一步只改
-// 调用点的字面量。`data_scopes: none`（客户主数据全员可见），本组件不
-// 需要任何数据范围过滤。
+// RegisterRoutes 挂载业务路由。每条路由都带 assembly.yaml 里声明的权限键
+// 注册（besdk.GET / POST / PATCH），没有不鉴权的业务路由。data_scopes: none：
+// 客户主数据全员可见，不做行级过滤。
 func RegisterRoutes(eng *gin.Engine, svc *service.Service) {
 	g := eng.Group("/mdm/customer")
 	besdk.GET(g, "/customers", "mdm.customer.view", listHandler(svc))

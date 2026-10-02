@@ -1,8 +1,6 @@
-// Package service 是 mdm-customer 的业务规则层。判过 SOP-P：这个组件是
-// 只读枢纽 + 常规 CRUD，不用任何设计模式，直接写就是最清楚的（设计计划
-// §"项目结构"一节记了这个结论，见 docs/手册.md）。这一层薄——真正的
-// 乐观锁判断、事件发布都在 repo 层随 SQL 一起做（同一个事务里），这里
-// 只负责给 http/grpc 一个不依赖 repo 内部细节的稳定入口，外加错误日志。
+// Package service 是 mdm-customer 的业务规则层。这一层薄：乐观锁、幂等、事件
+// 都在 repo 层随 SQL 在同一个事务里做；这里做入参校验，给 http / grpc 一个
+// 共用的入口，外加错误日志。
 package service
 
 import (
@@ -29,10 +27,8 @@ func New(r *repo.Repo, logger *slog.Logger) *Service {
 	return &Service{repo: r, logger: logger}
 }
 
-// validateCreditLimit 只做格式/正负号校验（合法非负小数），不代替
-// NUMERIC(18,2) 的精度校验——那是数据库自己的事，多的精度校验只是把
-// 数据库已经在做的事情在 Go 这层再抄一遍（决策：金额一律 string 传
-// decimal，这里解析成 float64 只是临时校验用，不用于存储或运算）。
+// validateCreditLimit 只校验"是合法的非负数"，精度交给 NUMERIC(18,2) 自己报错。
+// 解析成 float64 只为这一次校验，金额的存储与传递一律是十进制字符串。
 func validateCreditLimit(s string) error {
 	if s == "" {
 		return nil // repo 层留空时默认成 "0"

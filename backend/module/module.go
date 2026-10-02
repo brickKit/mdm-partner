@@ -1,10 +1,10 @@
-// Package module 是 mdm-customer 唯一的装配入口（全局约束 §K、设计书
-// §12.5.1、§13.3 铁律七）。单跑与合并走同一个 New 函数；模块只交回零件
-// （handler、gRPC 注册函数、迁移、后台循环），谁去 Listen、谁开池、
-// 谁 init OTel、谁装信号处理器，全归调用方。
+// Package module 是 mdm-customer 唯一的装配入口。独立运行（cmd/server 的
+// besdk.RunStandalone）与进外壳走同一个 New：模块只交回零件（HTTP handler、
+// gRPC 注册函数、后台循环），谁去 Listen、谁开连接池、谁初始化 OTel 与信号
+// 处理，全归调用方——这样同一份代码进外壳之后不会与别的成员互相覆盖。
 //
-// SOP-P 判过：这个组件是只读枢纽 + 常规 CRUD，不用任何设计模式，直接写
-// 就是最清楚的（见 docs/手册.md 的"项目结构"一节）。
+// 这个组件是被所有人读的主数据 + 常规 CRUD，repo / service / http / grpc
+// 四层直给，不用设计模式。
 package module
 
 import (
@@ -21,42 +21,41 @@ import (
 	"github.com/brickKit/mdm-customer/v2/backend/internal/service"
 )
 
-// New 构造 mdm-customer 模块。签名一个字都不许改（§12.5.1）——62 个
-// 组件都是这一个签名，外壳启动器与 be-ops 产出 4 都按它生成。
+// New 构造 mdm-customer 模块。签名是外壳与 RunStandalone 共同依赖的约定，
+// 不改。
 func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
-	// ⚠️ 配置只从 rt.Config 来，模块里零 os.Getenv（§12.5.3、决策 110）。
-	// 一个进程只有一份 environ：合并后 22 个模块的 PG_SCHEMA 会互相顶掉，
-	// 不报错，模块按别人的 schema 建表写数据。
+	// 配置只从 rt.Config 读，模块里不碰 os.Getenv：一个进程只有一份环境，
+	// 进外壳后各成员的 PG_SCHEMA 会互相覆盖，不报错，模块就按别人的 schema
+	// 读写数据。
 	schema := rt.Config.StringOr("PG_SCHEMA", "mdm_customer")
+	// role 是每个事务里 SET LOCAL ROLE 的目标：独立运行时它就是登录角色；
+	// 进外壳后外壳以自己的角色登录，靠这一步切到本组件的角色。
 	role := schema + "_rw"
 
-	// ⚠️ 池从 rt.DB 来，不许自己 sql.Open（§13.3 铁律二）。
-	// ⚠️ OTel / 日志 / 指标 registry 也从 rt 来，不许自己 init（§12.5.2）——
-	// SetTracerProvider 是「最后一个 init 的赢」，而症状是一路全绿。
+	// 连接池、日志、Tracer、Meter 都从 rt 来，不自己 sql.Open、不自己
+	// SetTracerProvider：进程级的初始化"最后一个赢"，进外壳后症状是一路全绿、
+	// trace 却都挂在别人名下。
 	r := repo.New(rt.DB, role, schema)
 	svc := service.New(r, rt.Logger)
 
-	// HTTP：engine 必须用 besdk.NewGinEngine，它已挂好 OTel / request-id /
-	// error→status / PII 脱敏日志 / RED 指标 / /healthz / /metrics。
-	// 自己 gin.New() 不会报错，只是这个组件从此没有 trace（§12.5.2）。
+	// engine 必须用 besdk.NewGinEngine：它挂好了 request-id、trace、RED 指标、
+	// 访问日志、panic 恢复、错误到状态码的映射与 /healthz、/metrics。
 	eng := besdk.NewGinEngine(rt)
 	httpapi.RegisterRoutes(eng, svc)
 
 	return &besdk.Module{
 		HTTPHandler: eng,
 
-		// ⚠️ gRPC 一个不省，而且由调用方在 extraPorts["grpc"] 上 Listen。
-		// 合并进外壳后，同一个 Go 进程里的两个模块仍然必须通过 gRPC 互相
-		// 调用，不许直接函数调用——gRPC 是逻辑边界的物理载体，省掉它等于
-		// 合并那一刻边界消失，再也拆不回去（§1.5 原则一）。
+		// gRPC 由调用方在 extraPorts 的 grpc 端口上 Listen。进外壳后同进程的
+		// 别的成员照样经 gRPC 调本组件，不直接调函数：边界在合并时不消失，
+		// 组件才能随时拆回独立部署。
 		RegisterGRPC: func(gs *grpc.Server) {
 			customerv1.RegisterCustomerServiceServer(gs, grpcapi.New(svc))
 		},
 
-		// 后台循环：Outbox 推送 + 分区自动维护（决策 54：跨月/跨周时分区
-		// 不存在会写崩）。⚠️ 两个循环必须并发跑，不能顺序调用——
-		// StartOutboxPump 是阻塞到 ctx 取消才返回的循环，顺序写会让第二个
-		// 循环永远等不到执行机会（计划原文的模板漏了这一点）。
+		// 后台循环：Outbox 推送 + event_outbox / event_inbox 的周分区维护（分区
+		// 不存在时写入会失败）。两个循环必须并发跑：StartOutboxPump 阻塞到 ctx
+		// 取消才返回，顺序调用的话第二个永远轮不到。
 		Start: func(ctx context.Context) error {
 			errCh := make(chan error, 2)
 			go func() { errCh <- besdk.StartOutboxPump(ctx, rt.DB, schema, rt.NATS, rt.Logger) }()
@@ -66,7 +65,7 @@ func New(ctx context.Context, rt *besdk.Runtime) (*besdk.Module, error) {
 			case <-ctx.Done():
 				return nil
 			case err := <-errCh:
-				return err // ⚠️ 返回 error，不许 log.Fatal：一个模块退进程 = 整组组件一起没了
+				return err // 返回 error，不 log.Fatal：进外壳后一个成员退出进程，所有成员一起没了
 			}
 		},
 		Stop: func(ctx context.Context) error { return nil }, // 后台循环靠 ctx 退出
