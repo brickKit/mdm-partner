@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: mdm-customer · 客户主数据
-  version: 2.0.0
+  version: 2.0.1
   description: |
     对外 REST 面；别的组件走 gRPC（contracts/mdm/customer/v1/customer.proto）。
     BatchGet 只在 gRPC 上：它是给别的组件防 N+1 的批量读，暴露成公网 REST
@@ -56,6 +56,7 @@ paths:
                     type: array
                     items: { $ref: "#/components/schemas/Customer" }
                   next_cursor: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
     post:
       summary: Create
       operationId: createCustomer
@@ -70,6 +71,8 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Customer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /customers/{id}:
     get:
@@ -86,6 +89,7 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Customer" }
+        "404": { $ref: "#/components/responses/NotFound" }
     patch:
       summary: Update
       operationId: updateCustomer
@@ -105,6 +109,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Customer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /customers/{id}/status:
     post:
@@ -126,6 +133,9 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Customer" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
 
   /customers/{id}/contacts:
     post:
@@ -147,9 +157,33 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Contact" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
 
 components:
+  responses:
+    BadRequest:
+      description: 参数不合法：credit_limit 不是非负十进制（最多 16 位整数、2 位小数，不收 NaN / Inf / 科学计数法）、status 不是 ACTIVE / DISABLED、缺必填字段、时间或游标格式不对
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotFound:
+      description: 客户不存在（含不是数字的 id）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    Conflict:
+      description: 冲突：version 过期（乐观锁，gRPC ABORTED），或显式传入的 code 已被占用（gRPC ALREADY_EXISTS）
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+
   schemas:
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+
     CustomerStatus:
       type: string
       enum: [ACTIVE, DISABLED]
@@ -206,7 +240,9 @@ components:
           description: 可选，留空则按 "C" + 6 位自增数字生成
         name: { type: string }
         tax_no: { type: string }
-        credit_limit: { type: string }
+        credit_limit:
+          type: string
+          description: 非负十进制字符串，最多 16 位整数、2 位小数（NUMERIC(18,2)）；不收 NaN / Inf / 科学计数法。留空为 0
 
     UpdateRequest:
       type: object
@@ -219,7 +255,9 @@ components:
           description: 乐观锁，与库里不一致则拒绝
         name: { type: string }
         tax_no: { type: string }
-        credit_limit: { type: string }
+        credit_limit:
+          type: string
+          description: 非负十进制字符串，最多 16 位整数、2 位小数（NUMERIC(18,2)）；不收 NaN / Inf / 科学计数法。留空为 0
 
     SetStatusRequest:
       type: object
