@@ -303,3 +303,31 @@ func TestCustomer_REST不存在或不是数字的id答404(t *testing.T) {
 		}
 	}
 }
+
+// TestSetStatus_REST非法状态值答400：status 只能是 ACTIVE 或 DISABLED（契约的
+// CustomerStatus 枚举）；别的值是调用方的错，答 400，库里的状态与 version 不变。
+func TestSetStatus_REST非法状态值答400(t *testing.T) {
+	r, _ := testRepo(t)
+	eng := engine(service.New(r, slog.Default()))
+	ctx := context.Background()
+
+	c, err := r.Create(ctx, repo.CreateInput{
+		IdempotencyKey: runKey("http-bad-status"), Code: runKey("C-HTTP-BAD-STATUS"), Name: "非法状态测试"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, st := range []string{"FOO", "active", "CUSTOMER_STATUS_DISABLED"} {
+		if code, body := do(t, eng, http.MethodPost, "/mdm/customer/customers/"+c.ID+"/status", map[string]any{
+			"idempotency_key": runKey("http-bad-status-set"), "version": c.Version, "status": st}); code != http.StatusBadRequest {
+			t.Errorf("status=%q 应返回 400，实际 %d：%s", st, code, body)
+		}
+	}
+
+	got, _, err := r.BatchGet(ctx, []string{c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Status != "ACTIVE" || got[0].Version != c.Version {
+		t.Fatalf("非法状态值不该改库，实际 %d 条", len(got))
+	}
+}

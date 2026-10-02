@@ -33,11 +33,17 @@ func toProtoStatus(s string) customerv1.CustomerStatus {
 	return customerv1.CustomerStatus_CUSTOMER_STATUS_ACTIVE
 }
 
+// fromProtoStatus 只翻两个真实状态；UNSPECIFIED（proto3 里漏填就是它）与未知
+// 值翻成空串，由 service 层拒绝——不能把漏填当成 ACTIVE，否则一个想停用客户却
+// 漏填了字段的调用方会把客户悄悄启用。
 func fromProtoStatus(s customerv1.CustomerStatus) string {
-	if s == customerv1.CustomerStatus_CUSTOMER_STATUS_DISABLED {
+	switch s {
+	case customerv1.CustomerStatus_CUSTOMER_STATUS_ACTIVE:
+		return "ACTIVE"
+	case customerv1.CustomerStatus_CUSTOMER_STATUS_DISABLED:
 		return "DISABLED"
 	}
-	return "ACTIVE"
+	return ""
 }
 
 func toProtoCustomer(c *repo.Customer) *customerv1.Customer {

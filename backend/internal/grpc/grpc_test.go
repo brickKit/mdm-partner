@@ -124,3 +124,35 @@ func TestCreate_gRPC重复code是AlreadyExists_不存在的客户是NotFound(t *
 		t.Errorf("Update 带过期 version 应该是 Aborted，实际 %v（%v）", got, err)
 	}
 }
+
+// TestSetStatus_gRPC漏填status是InvalidArgument：CUSTOMER_STATUS_UNSPECIFIED（proto3
+// 里不填就是它）不能被当成 ACTIVE——一个想停用客户、却漏填了字段的调用方，会把客户
+// 悄悄启用。库里的状态与 version 不变。
+func TestSetStatus_gRPC漏填status是InvalidArgument(t *testing.T) {
+	cli, r := testClient(t)
+	ctx := context.Background()
+
+	c, err := r.Create(ctx, repo.CreateInput{IdempotencyKey: runKey("grpc-unspec"), Code: runKey("C-GRPC-UNSPEC"), Name: "漏填状态测试"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	disabled, err := cli.SetStatus(ctx, &customerv1.SetStatusRequest{
+		IdempotencyKey: runKey("grpc-unspec-disable"), Id: c.ID, Version: c.Version,
+		Status: customerv1.CustomerStatus_CUSTOMER_STATUS_DISABLED})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = cli.SetStatus(ctx, &customerv1.SetStatusRequest{
+		IdempotencyKey: runKey("grpc-unspec-set"), Id: c.ID, Version: disabled.Customer.Version})
+	if got := status.Code(err); got != codes.InvalidArgument {
+		t.Errorf("漏填 status 应该是 InvalidArgument，实际 %v（%v）", got, err)
+	}
+	got, err := cli.Get(ctx, &customerv1.GetRequest{Id: c.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != customerv1.CustomerStatus_CUSTOMER_STATUS_DISABLED || got.Version != disabled.Customer.Version {
+		t.Fatalf("漏填 status 不该改库，实际 %v / version %d", got.Status, got.Version)
+	}
+}
