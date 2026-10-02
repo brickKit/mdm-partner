@@ -19,7 +19,7 @@
 ## 部署前准备
 
 - **PostgreSQL**：schema `mdm_customer`；如果你的 schema 约定会建 `mdm_customer_archive` 也可以建（本组件从不写它）。登录角色 `mdm_customer_rw`，在 `mdm_customer` 上有 `USAGE` 与 `CREATE`，以及它的密码。迁移以这个角色运行并建表，所以表归它所有——这一点有用：运行中的组件会自己给 `event_outbox` / `event_inbox` 建周分区，这需要表的所有权。brickKit 不建这些；在 BrickEnterprise 装配项目里，`make dev-env` 把密码写进 `.env`，`make db-init` 建 schema、角色与授权。
-- **NATS** 在组件启动时可经 `NATS_URL` 访问：连不上时进程在启动时就退出。事件与业务变更在同一个事务里写进 Outbox 表，再由后台循环推送；运行起来之后，发不出去的事件留在 Outbox 里重试，不会丢。
+- **NATS** 在组件启动时可经 `NATS_URL` 访问：连不上时进程在启动时就退出。事件与业务变更在同一个事务里写进 Outbox 表，再由后台循环推送；运行起来之后，发送失败的事件留在 Outbox 里重试。推送走的是 core NATS：客户端重连期间发出的事件存在客户端缓冲里、按已发送记账，重连始终不成功时这些事件会丢。
 - **权限**（`infra/authz`）与**身份**（`infra/iam-casdoor`，或任何提供 JWKS 的 IAM）可经 `AUTHZ_BUNDLE_URL`、`IAM_JWKS_URL` 访问，REST 路由才会返回错误以外的结果。它们是配置不是依赖：没有它们组件照样启动。
 - 演示数据（可选）：组件跑起来之后，在组件目录 `make seed`，经真实 gRPC 接口建 15 个示例客户。
 

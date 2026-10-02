@@ -33,7 +33,7 @@ check-version:  ## metadata.version、go.mod 的主版本、HEAD 上的 tag 三�
 	 fi
 	@echo "✓ version=$(VERSION)（go.mod 主版本一致；HEAD 上没有 tag，或 $(VERSION) 与 v$(VERSION) 都在）"
 
-test:  ## L1–L3 测试。需要 TEST_PG_DSN（指向 brickkit_test_db）；TEST_NATS_URL 可选
+test:  ## L1–L3 测试。需要 TEST_PG_DSN（指向 brickkit_test_db）
 	@# 连库测试在没有 TEST_PG_DSN 时 t.Skip，go test 照样打印 ok、退出 0——全部跳过却
 	@# 显示通过。所以这里先拦住，大声失败。
 	@test -n "$$TEST_PG_DSN" || { echo "✗ 没设 TEST_PG_DSN：连库测试会全部 SKIP 而显示 ok（设法见 AGENTS.md 的 Build and test）"; exit 1; }
