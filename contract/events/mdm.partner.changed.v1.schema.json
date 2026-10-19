@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/mdm-partner/events/mdm.partner.changed.v1.schema.json",
+  "title": "mdm.partner.changed.v1",
+  "description": "A business partner's complete current state (a full-state event), with its formal contacts and addresses; the record ID is its UUIDv7, never reused. Its roles are separate records (mdm.partner_role.changed.v1). Also the data of SourceService for AGGREGATE_PARTNER.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "kind", "name", "names", "country", "tax_id", "state", "contacts", "addresses", "version", "updated_at"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "kind": {"enum": ["organization", "person"]},
+    "name": {"type": "string", "minLength": 1},
+    "names": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+    "country": {"type": "string", "pattern": "^[A-Z]{2}$", "description": "ISO 3166-1 alpha-2"},
+    "tax_id": {"type": ["string", "null"], "minLength": 1, "description": "in the partner's country; a duplicate in the same country is pointed out, not refused (D22)"},
+    "state": {"enum": ["active", "suspended", "retired"], "description": "protocol 07's lifecycle (merged and destroyed come with merging and erasure)"},
+    "contacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "name": {"type": "string", "minLength": 1},
+          "role": {"type": "string"},
+          "email": {"type": "string"},
+          "phone": {"type": "string"}
+        }
+      }
+    },
+    "addresses": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "kind", "lines", "city", "country"],
+        "properties": {
+          "id": {"type": "string", "format": "uuid"},
+          "kind": {"enum": ["registered", "billing", "shipping"]},
+          "lines": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 1, "maxItems": 4},
+          "city": {"type": "string", "minLength": 1},
+          "region": {"type": "string"},
+          "postal_code": {"type": "string"},
+          "country": {"type": "string", "pattern": "^[A-Z]{2}$"}
+        }
+      }
+    },
+    "version": {"type": "integer", "minimum": 1},
+    "updated_at": {"type": "string", "format": "date-time"}
+  }
+}

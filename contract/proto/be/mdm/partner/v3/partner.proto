@@ -1,0 +1,148 @@
+// The system surface of mdm/partner: the source methods of protocol 02 (S1-S3), the eligibility query and the batch
+// resolution of protocol 07. Components call it with their service identity; it never filters by a user (a component
+// that shows the result to a user trims it by that user's read contract first). The user surface is REST
+// (../../../../../openapi.yaml); the event payloads are ../../../../../events/.
+syntax = "proto3";
+
+package be.mdm.partner.v3;
+
+option go_package = "github.com/brickKit/mdm-partner/contract/v3/gen/go/be/mdm/partner/v3;partnerv3";
+
+// SourceService lets a consumer build and repair a projection of partners and their roles (protocol 02). Every
+// answer declares the source's implementation instance, database epoch and the stream's numbered positions.
+service SourceService {
+  rpc Snapshot(SnapshotRequest) returns (SnapshotResponse);
+  rpc Read(ReadRequest) returns (ReadResponse);
+}
+
+// PartnerService answers what a referencing component needs at the moment it commits (protocol 07).
+service PartnerService {
+  // CheckEligibility: may a new document of the purpose reference the partner in the legal entity now? The answer
+  // is evidence for W (30 s, protocol 07): the caller commits within it or asks again.
+  rpc CheckEligibility(CheckEligibilityRequest) returns (CheckEligibilityResponse);
+  // Resolve answers each ID with the partner's current data, the survivor it was merged into, a tombstone, or not
+  // found; at most 500 IDs a call (more is refused, never cut).
+  rpc Resolve(ResolveRequest) returns (ResolveResponse);
+}
+
+// Aggregate names one kind of record of this component.
+enum Aggregate {
+  AGGREGATE_UNSPECIFIED = 0;
+  // mdm.partner.changed.v1
+  AGGREGATE_PARTNER = 1;
+  // mdm.partner_role.changed.v1
+  AGGREGATE_PARTNER_ROLE = 2;
+}
+
+message Stamp {
+  string deployment = 1;
+  string instance = 2;
+  // "<recovery generation>.<timeline>"
+  string epoch = 3;
+  // per partition of the stream mdm.partner, the highest numbered publish position in the answer's snapshot
+  repeated int64 positions = 4;
+}
+
+message Record {
+  string id = 1;
+  int64 version = 2;
+  // the canonical JSON of the record: the same payload as its event (events/<type>.schema.json)
+  bytes data = 3;
+}
+
+message SnapshotRequest {
+  Aggregate aggregate = 1;
+  string cursor = 2;
+  // 1-500; 0: 500
+  int32 limit = 3;
+}
+
+message SnapshotResponse {
+  repeated Record records = 1;
+  string next_cursor = 2;
+  Stamp stamp = 3;
+}
+
+message ReadRequest {
+  Aggregate aggregate = 1;
+  repeated string ids = 2;
+}
+
+enum ReadState {
+  READ_STATE_UNSPECIFIED = 0;
+  READ_STATE_EXISTS = 1;
+  // deleted; version is the deleting version (a destroyed partner, not in step 6)
+  READ_STATE_TOMBSTONE = 2;
+  READ_STATE_PURGED = 3;
+}
+
+message ReadResult {
+  string id = 1;
+  ReadState state = 2;
+  int64 version = 3;
+  bytes data = 4;
+}
+
+message ReadResponse {
+  repeated ReadResult results = 1;
+  Stamp stamp = 2;
+}
+
+// Purpose is what a new document wants the partner for; each purpose needs its role.
+enum Purpose {
+  PURPOSE_UNSPECIFIED = 0;
+  // the customer role in the legal entity
+  PURPOSE_SELL = 1;
+  // the supplier role (not in step 6: CAPABILITY_UNSUPPORTED)
+  PURPOSE_PURCHASE = 2;
+  // the employee payee role (not in step 6: CAPABILITY_UNSUPPORTED)
+  PURPOSE_PAY_EMPLOYEE = 3;
+}
+
+message CheckEligibilityRequest {
+  string partner_id = 1;
+  string legal_entity_id = 2;
+  Purpose purpose = 3;
+}
+
+message CheckEligibilityResponse {
+  bool eligible = 1;
+  // eligible, partner_suspended, partner_retired, partner_merged, partner_destroyed, not_found, role_not_opened,
+  // role_suspended, role_retired
+  string reason = 2;
+  int64 partner_version = 3;
+  // the role the purpose needs, when it exists
+  string role_id = 4;
+  int64 role_version = 5;
+  // merged: the survivor to suggest (protocol 07)
+  string survivor_id = 6;
+  // RFC 3339: when the answer was read; the evidence is good until evaluated_at + W
+  string evaluated_at = 7;
+}
+
+message ResolveRequest {
+  repeated string ids = 1;
+}
+
+// Resolution is protocol 07's answer by ID (invisible is a user-surface answer; unreachable is the caller's).
+enum Resolution {
+  RESOLUTION_UNSPECIFIED = 0;
+  RESOLUTION_CURRENT = 1;
+  // merged: survivor_id is the end of the alias chain
+  RESOLUTION_ALIAS = 2;
+  RESOLUTION_TOMBSTONE = 3;
+  RESOLUTION_NOT_FOUND = 4;
+}
+
+message Resolved {
+  string id = 1;
+  Resolution resolution = 2;
+  int64 version = 3;
+  // the current data (mdm.partner.changed.v1) when current
+  bytes data = 4;
+  string survivor_id = 5;
+}
+
+message ResolveResponse {
+  repeated Resolved results = 1;
+}

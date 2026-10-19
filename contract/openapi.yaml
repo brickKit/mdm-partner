@@ -1,0 +1,221 @@
+openapi: 3.1.0
+info:
+  title: mdm/partner user surface
+  version: 3.0.0
+  description: >-
+    Business partners, their formal contacts and addresses, and their roles by legal entity, for people and the front
+    end. Every route needs a platform access token and the operation in x-operation; what the caller may not see
+    answers 404. Errors are application/problem+json with a reason. Lists page by cursor only (protocol 14). Supplier,
+    employee payee and affiliate roles, merging and splitting, bank accounts and erasure are in the contract but not
+    in step 6: they answer CAPABILITY_UNSUPPORTED (D75).
+paths:
+  /api/partner/partners:
+    get:
+      operationId: listPartners
+      x-operation: mdm.partner.read
+      parameters:
+        - {name: state, in: query, schema: {enum: [active, suspended, retired]}}
+        - {name: kind, in: query, schema: {enum: [organization, person]}}
+        - {name: q, in: query, schema: {type: string}, description: 'keyword over names and the tax ID (folded, pinyin)'}
+        - $ref: '#/components/parameters/cursor'
+        - $ref: '#/components/parameters/limit'
+      responses:
+        '200':
+          description: one page, by name
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [partners, next_cursor]
+                properties:
+                  partners: {type: array, items: {$ref: '#/components/schemas/Partner'}}
+                  next_cursor: {type: string}
+        default: {$ref: '#/components/responses/problem'}
+    post:
+      operationId: createPartner
+      x-operation: mdm.partner.create
+      summary: Create a partner; needs an Idempotency-Key (the same key and body again return the first answer)
+      parameters:
+        - {name: Idempotency-Key, in: header, required: true, schema: {type: string}}
+      requestBody:
+        required: true
+        content: {application/json: {schema: {$ref: '#/components/schemas/PartnerIn'}}}
+      responses:
+        '200': {description: the partner and the partners with the same tax ID in the same country, content: {application/json: {schema: {$ref: '#/components/schemas/PartnerAnswer'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      operationId: getPartner
+      x-operation: mdm.partner.read
+      responses:
+        '200': {description: the partner, content: {application/json: {schema: {$ref: '#/components/schemas/Partner'}}}}
+        default: {$ref: '#/components/responses/problem'}
+    patch:
+      operationId: updatePartner
+      x-operation: mdm.partner.edit
+      summary: Change names, tax ID, contacts or addresses (lists are replaced whole); with version, only that version
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                version: {type: integer}
+                name: {type: string}
+                names: {type: object, additionalProperties: {type: string}}
+                tax_id: {type: [string, 'null']}
+                contacts: {type: array, items: {type: object}}
+                addresses: {type: array, items: {type: object}}
+      responses:
+        '200': {description: the partner and its tax ID duplicates, content: {application/json: {schema: {$ref: '#/components/schemas/PartnerAnswer'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/state:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post:
+      operationId: changePartnerState
+      x-operation: mdm.partner.edit
+      summary: Suspend, resume or retire (protocol 07); a retired partner stays retired
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state]
+              properties: {state: {enum: [active, suspended, retired]}, version: {type: integer}}
+      responses:
+        '200': {description: the partner, content: {application/json: {schema: {$ref: '#/components/schemas/Partner'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get:
+      operationId: listRoles
+      x-operation: mdm.partner.read
+      responses:
+        '200':
+          description: every role of the partner
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [roles]
+                properties: {roles: {type: array, items: {$ref: '#/components/schemas/Role'}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles/customer/{legal_entity_id}:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    put:
+      operationId: putCustomerRole
+      x-operation: mdm.partner_role.manage
+      summary: Open the customer role in a legal entity, or change its defaults; the same content again changes nothing
+      description: >-
+        The legal entity must exist and be active in mdm/org, asked at this moment; when mdm/org cannot answer, the
+        role is not opened (unreachable is not "does not exist", protocol 07).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                default_currency: {type: [string, 'null']}
+                payment_terms: {type: [string, 'null']}
+      responses:
+        '200': {description: the role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles/customer/{legal_entity_id}/state:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    post:
+      operationId: changeCustomerRoleState
+      x-operation: mdm.partner_role.manage
+      summary: Suspend, resume or retire the customer role; a retired role stays retired
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state]
+              properties: {state: {enum: [active, suspended, retired]}, version: {type: integer}}
+      responses:
+        '200': {description: the role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/eligibility:
+    get:
+      operationId: eligibility
+      x-operation: mdm.partner.read
+      summary: May a new document of the purpose reference the partner in the legal entity now (the same answer as PartnerService.CheckEligibility)
+      parameters:
+        - {name: partner_id, in: query, required: true, schema: {type: string}}
+        - {name: legal_entity_id, in: query, required: true, schema: {type: string}}
+        - {name: purpose, in: query, required: true, schema: {enum: [sell, purchase, pay_employee]}}
+      responses:
+        '200':
+          description: the answer
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [eligible, reason]
+                properties:
+                  eligible: {type: boolean}
+                  reason: {type: string}
+                  partner_version: {type: integer}
+                  role_id: {type: string}
+                  role_version: {type: integer}
+                  evaluated_at: {type: string, format: date-time}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles/supplier/{legal_entity_id}:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    put: {operationId: putSupplierRole, x-operation: mdm.partner_role.manage, summary: 'Not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+  /api/partner/partners/{id}/roles/employee/{legal_entity_id}:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    put: {operationId: putEmployeeRole, x-operation: mdm.partner_role.manage, summary: 'Opened by mdm/employee with a business confirmation (D69); not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+  /api/partner/partners/{id}/merge:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {operationId: mergePartner, x-operation: mdm.partner.merge, summary: 'Merge into a survivor after a person confirms (D22); not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+  /api/partner/partners/{id}/split:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    post: {operationId: splitPartner, x-operation: mdm.partner.merge, summary: 'Undo a wrong merge; not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+  /api/partner/partners/{id}/bank-accounts:
+    parameters: [{$ref: '#/components/parameters/id'}]
+    get: {operationId: listBankAccounts, x-operation: mdm.partner.read, summary: 'Not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+    post: {operationId: addBankAccount, x-operation: mdm.partner.edit, summary: 'Not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
+components:
+  parameters:
+    id: {name: id, in: path, required: true, schema: {type: string, format: uuid}}
+    legal_entity_id: {name: legal_entity_id, in: path, required: true, schema: {type: string, format: uuid}}
+    cursor: {name: cursor, in: query, schema: {type: string}}
+    limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+  responses:
+    problem:
+      description: an error (application/problem+json with reason)
+      content:
+        application/problem+json:
+          schema: {type: object, required: [reason], properties: {reason: {type: string}, detail: {type: string}}}
+  schemas:
+    Partner: {$ref: 'events/mdm.partner.changed.v1.schema.json'}
+    Role: {$ref: 'events/mdm.partner_role.changed.v1.schema.json'}
+    PartnerIn:
+      type: object
+      additionalProperties: false
+      required: [kind, name, country]
+      properties:
+        kind: {enum: [organization, person]}
+        name: {type: string}
+        names: {type: object, additionalProperties: {type: string}}
+        country: {type: string}
+        tax_id: {type: [string, 'null']}
+        contacts: {type: array, items: {type: object}, description: 'id is given by the component when absent'}
+        addresses: {type: array, items: {type: object}}
+    PartnerAnswer:
+      type: object
+      required: [partner, duplicate_candidates]
+      properties:
+        partner: {$ref: '#/components/schemas/Partner'}
+        duplicate_candidates: {type: array, items: {type: string, format: uuid}, description: 'other partners with the same tax ID in the same country: merge by hand (D22)'}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://brickkit.dev/mdm-partner/events/mdm.partner_role.changed.v1.schema.json",
+  "title": "mdm.partner_role.changed.v1",
+  "description": "A partner's role in one legal entity (a full-state event); the record ID is its UUIDv7. One role of a kind per partner and legal entity. Also the data of SourceService for AGGREGATE_PARTNER_ROLE.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "partner_id", "role", "legal_entity_id", "state", "default_currency", "payment_terms", "version", "updated_at"],
+  "properties": {
+    "id": {"type": "string", "format": "uuid"},
+    "partner_id": {"type": "string", "format": "uuid"},
+    "role": {"enum": ["customer"], "description": "supplier, employee payee and affiliate come later"},
+    "legal_entity_id": {"type": "string", "format": "uuid"},
+    "state": {"enum": ["active", "suspended", "retired"]},
+    "default_currency": {"type": ["string", "null"], "pattern": "^[A-Z]{3}$"},
+    "payment_terms": {"type": ["string", "null"], "description": "a payment terms code of the deployment"},
+    "version": {"type": "integer", "minimum": 1},
+    "updated_at": {"type": "string", "format": "date-time"}
+  }
+}
