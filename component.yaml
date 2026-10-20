@@ -4,7 +4,7 @@ kind: Component
 metadata:
   id: mdm/partner
   name: Partner
-  version: 3.0.0
+  version: 3.0.1
   description: "Business partners (organizations and persons) with their formal contacts and addresses, their customer roles by legal entity, the eligibility a new document needs and the batch resolution of protocol 07; full-state events and the source methods of protocol 02"
   repository: https://github.com/brickKit/mdm-partner
 

@@ -1,5 +1,5 @@
 // Command seed fills a running mdm/partner with the seed data for people (be-assembly-standard's seed and test data
-// conventions): 80 partners (organizations and persons, Chinese and English names, enough to page through) with
+// conventions): 78 partners (organizations and persons, Chinese and English names, enough to page through) with
 // contacts and addresses; customer roles in the legal entities CN01 and ES01 of mdm/org's seed; and the negative data
 // each eligibility answer needs: suspended and retired partners, a suspended and a retired role, a partner without a
 // role in ES01, two partners sharing a tax ID (a merge candidate, D22). Partners are found again by their name before
