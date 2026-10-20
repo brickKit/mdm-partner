@@ -13,6 +13,7 @@
 | `partner/records.go` | 记录的类型、读取、税号重复、事件 |
 | `partner/source.go` | 系统面：来源方法、资格查询、批量解析 |
 | `partner/migrations/` | 表：伙伴、角色 |
+| `cmd/seed/` | 种子：角色与授予、管理单元「中国区客户」与委派、伙伴、地址与联系人、各法人的客户角色（`make seed`） |
 | `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml` |
 
 | 想改 | 从这里开始 | 然后 |
