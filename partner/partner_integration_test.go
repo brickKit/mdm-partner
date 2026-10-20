@@ -5,7 +5,7 @@ package partner
 // The partner component against PostgreSQL and the bus over its real surfaces (L2). mdm/org is a stand-in that
 // speaks its published contract (SourceService.Read) over mTLS, so the test needs no other component's code; the
 // stand-in can also be stopped to check that an unreachable legal entity is not taken as a missing one. Needs
-// BE_SDK_TEST_PG_ADMIN and BE_SDK_TEST_NATS_URL, as be-sdk-go's integration tests. The member listens on 18225 (user)
+// BE_SDK_TEST_PG_ADMIN and BE_SDK_TEST_NATS_URL, as be-sdk-go's integration tests. The member listens on 28225 (user)
 // and 9225 (system); the stand-in on 19093. Run: go test -tags integration ./partner/
 
 import (
@@ -36,7 +36,7 @@ import (
 )
 
 const (
-	itPort   = "18225"
+	itPort   = "28225"
 	itBase   = "http://localhost:" + itPort
 	itSystem = "localhost:9225"
 	itOrg    = "localhost:19093"
@@ -123,6 +123,7 @@ func TestPartnerEndToEnd(t *testing.T) {
 	}
 	stopOrg := startOrg()
 
+	portFree(t, itPort, itSystem)
 	env := w.Env(t, ID)
 	for k, v := range map[string]string{"COMPONENT_ID": ID, "COMPONENT_VERSION": Version, "PORT": itPort,
 		"STOP_DRAIN_DELAY": "50ms", "PG_HOST": u.Hostname(), "PG_PORT": u.Port(), "PG_DATABASE": strings.TrimPrefix(u.Path, "/"),
@@ -243,4 +244,17 @@ func TestPartnerEndToEnd(t *testing.T) {
 	var n int
 	require.NoError(t, admin.QueryRow(ctx, "SELECT count(*) FROM "+itSchema+".be_outbox WHERE record_id = $1", role["id"]).Scan(&n))
 	assert.Equal(t, 3, n, "opened, suspended, resumed")
+}
+
+// portFree fails at once when a port the member needs is taken: a running cell (host ports 18xxx) or another member
+// would answer in its place, and the test would assert against another process.
+func portFree(t *testing.T, addrs ...string) {
+	for _, a := range addrs {
+		if !strings.Contains(a, ":") {
+			a = "localhost:" + a
+		}
+		ln, err := net.Listen("tcp", a)
+		require.NoError(t, err, "port %s is taken: is a cell or another member running?", a)
+		_ = ln.Close()
+	}
 }
