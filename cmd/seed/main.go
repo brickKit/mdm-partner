@@ -2,8 +2,8 @@
 // conventions):
 //
 //   - access, by the authorization admin: the roles maintain (the seed user, test.mdm.admin), read (test.mdm.viewer and
-//     test.unit.admin.cn) and customer roles (test.sales.es); the management unit 「中国区客户」 limited to reading
-//     partners and keeping customer roles, held by test.unit.admin.cn, who grants test.sales.cn and test.sales.multi
+//     test.unit.admin.cn) and customer roles (test.sales.es); the management unit 「中国区客户」 limited to granting the reading
+//     of partners and the keeping of customer roles (operations, not countries: partners have no dimension yet), held by test.unit.admin.cn, who grants test.sales.cn and test.sales.multi
 //     within it; its attempt to grant editing partners is refused (the refusal is kept at the effect point);
 //   - 209 partners: organizations in China (120), Spain (30), the United States (25) and Hong Kong (6), 25 persons and
 //     3 negative ones, enough to page through and to search in Chinese, pinyin and English; each organization has a

@@ -20,5 +20,5 @@
 
 ## 资格与解析（协议 07）
 
-- **资格**：伙伴启用、该用途的角色在该法人启用，才 `eligible`；否则 `reason` 说明缺的部分：`not_found`、`partner_suspended`、`partner_retired`、`role_not_opened`、`role_suspended`、`role_retired`（合并与销毁之后另有 `partner_merged`、`partner_destroyed`）。回答带取证时刻；调用方在取证时刻加 W（30 秒）之内提交，过期重新取证，不在事务里调用。
+- **资格**：伙伴启用、该用途的角色在该法人启用，才 `eligible`；否则 `reason` 说明缺的部分：`not_found`、`partner_suspended`、`partner_retired`、`role_not_opened`、`role_suspended`、`role_retired`（合并与销毁之后另有 `partner_merged`、`partner_destroyed`）。回答带取证时刻；调用方从发出查询时起在 W（30 秒）之内提交，过期重新取证，不在事务里调用（协议 07）。
 - **解析**：每个身份一个结果：当前（附数据）、已并入（附别名链末端的存续伙伴）、墓碑、不存在。“不可见”只在用户面出现；“不可达”是调用方自己的结论，不能当作不存在。

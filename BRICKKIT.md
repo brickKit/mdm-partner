@@ -10,11 +10,11 @@
 
 信用额度不在这里（`erp/credit`），CRM 私有的关系不在这里（`crm/customer`）。
 
-实验第 6 步的范围：只有客户角色。供应商、员工往来与关联方角色、合并与拆回、伙伴银行账户、销毁与擦除都在契约里，调用答“能力不支持”（`CAPABILITY_UNSUPPORTED`，D75）。
+实验第 6 步的范围：只有客户角色；扩展字段（协议 08）还没有，等 SDK 支持。供应商、员工往来与关联方角色、合并与拆回、伙伴银行账户、销毁与擦除都在契约里，调用答“能力不支持”（`CAPABILITY_UNSUPPORTED`，D75）。
 
 ## 部署前准备
 
-- 数据库：自己的 schema、运行角色与属主角色（装配项目注册表的 `mdm_partner`）。
+- 数据库：PostgreSQL 16 及以上；schema `mdm_partner`，属主角色 `mdm_partner_owner`（只供迁移）与运行角色 `mdm_partner_rw`（只有读写数据的权限），名字来自装配项目的注册表。三者由部署方在第一次启动前建好（be-assembly-standard 的 `make db-init` 按装配进项目的组件配置生成并执行）；表由本组件的迁移建，迁移里不建角色、不授权。
 - 消息系统（`BUS_URL`）与实现实例（`IMPLEMENTATION_INSTANCE`）：每次变化以完整状态事件发布到流 `mdm.partner`（4 个分区）。
 - 部署的服务证书（`SERVICE_TLS_*`）；身份与授权（`IAM_*`、`AUTHZ_GRPC_URL`、`DEPLOYMENT_ID`）；审计（`AUDIT_GRPC_URL`）。
 - 依赖 `mdm/org`：经它的系统面确认法人。
