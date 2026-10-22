@@ -4,13 +4,18 @@ kind: Component
 metadata:
   id: mdm/partner
   name: Partner
-  version: 3.0.3
+  version: 3.0.4
   description: "Business partners (organizations and persons) with their formal contacts and addresses, their customer roles by legal entity, the eligibility a new document needs and the batch resolution of protocol 07; full-state events and the source methods of protocol 02"
   repository: https://github.com/brickKit/mdm-partner
 
 dependencies:
   components:
-    - mdm/org@3.0.2
+    - mdm/org@3.0.3
+
+events:
+  publishes:
+    - mdm.partner.changed.v1
+    - mdm.partner_role.changed.v1
 
 deployment:
   type: container

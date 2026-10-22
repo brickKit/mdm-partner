@@ -1,6 +1,6 @@
 # mdm/partner
 
-业务伙伴组件的代码。先读 `BRICKKIT.md`；依据是装配项目 be-assembly-standard 的边界卡 `docs/zh/07-components/mdm.md`（`mdm/partner`）、协议 02（来源）、协议 07（引用的生命周期、资格与解析）、协议 14（列表）、D20–D22。
+业务伙伴组件的代码。用法与边界在 `BRICKKIT.md`，为什么这样设计（术语、数据、状态与规则、未决问题）在 [docs/design.md](docs/design.md)；跨组件的规则在装配项目 be-assembly-standard 的协议 02（来源）、协议 07（引用的生命周期、资格与解析）、协议 14（列表）与 D20–D22。
 
 ## 代码地图
 
@@ -10,22 +10,25 @@
 | `partner/module.go` | 路由与系统面的注册；伙伴的新建（幂等键）、修改、状态；本版不做的路由 |
 | `partner/roles.go` | 客户角色的开通与状态（`legalEntityActive` 同步问 mdm/org）；资格（`eligibility`） |
 | `partner/lists.go` | 伙伴列表 |
-| `partner/records.go` | 记录的类型、读取、税号重复、事件 |
+| `partner/records.go` | 记录的类型、读取、税号重复（`duplicates`）、事件 |
 | `partner/source.go` | 系统面：来源方法、资格查询、批量解析 |
 | `partner/migrations/` | 表：伙伴、角色 |
 | `cmd/seed/` | 种子：角色与授予、管理单元「中国区客户」与委派、伙伴、地址与联系人、各法人的客户角色（`make seed`） |
-| `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml` |
+| `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml`；事件 schema 同时是来源方法的 `data` 与 OpenAPI 的形状 |
+| `docs/design.md` | 设计：术语、表、状态与规则、命令、事件、依赖、实现状态、未决问题 |
 
 | 想改 | 从这里开始 | 然后 |
 | --- | --- | --- |
 | 资格的规则 | `roles.go` 的 `eligibility` | 集成测试的资格一段；第 7 步销售的资格取证 |
 | 开通角色的前提 | `roles.go` 的 `putCustomerRole`、`legalEntityActive` | 集成测试里 mdm/org 的替身 |
 | 加一种角色 | `migrations` 的 `role` 约束、`roleOf` | 契约的 `Purpose`、OpenAPI |
+| 税号查重或规范化 | `records.go` 的 `duplicates`、`module.go` 的 `partnerIn.apply` | 集成测试的重复税号一段 |
+| 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 
 ## 构建与测试
 
-- `go test ./...`：清单的 `configSchema`、OpenAPI 与路由、事件载荷、合并安全。
-- `go test -tags integration ./partner/`：真实的 PostgreSQL 与消息系统（`BE_SDK_TEST_PG_ADMIN`、`BE_SDK_TEST_NATS_URL`），be-sdk-go 的 `sectest` 测试部署；`mdm/org` 是按它发布的契约写的替身，不导入它的代码。
+- `go test ./...`（`make test`）：清单的 `configSchema` 与 `events`、OpenAPI 与路由、事件载荷、合并安全。
+- `go test -tags integration ./partner/`（`make test-integration`）：真实的 PostgreSQL 与消息系统，例如 `BE_SDK_TEST_PG_ADMIN=postgres://postgres:<口令>@localhost:5432/brickkit_test_db`（装配项目 `make up` 的 `be-postgres`，口令是 `.env` 的 `POSTGRES_PASSWORD`；测试自己建、删 `mdm_partner_it` schema）与 `BE_SDK_TEST_NATS_URL=nats://localhost:4222`；端口 28225、9225 要空着。be-sdk-go 的 `sectest` 是测试部署；`mdm/org` 是按它发布的契约写的替身（引入的是它的契约模块，不是代码）。
 - `brickkit lint`
 
 ## 设计取舍
@@ -38,6 +41,7 @@
 
 - `mdm/org` 不可达不能当成“法人不存在”：返回依赖不可用，而不是 `LEGAL_ENTITY_NOT_USABLE`。
 - 资格是“此刻”的证据：调用方要在 W 之内提交，不要缓存回答。
+- 资格查询不看法人的状态：法人暂停后，已开通的角色仍答 `eligible`；挡住新单据的是引用方向 `mdm/org` 取的法人证据（`docs/design.md` 的未决问题）。
 
 ## 改代码前自查
 

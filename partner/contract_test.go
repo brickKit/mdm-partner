@@ -24,6 +24,13 @@ func TestTheManifestDeclaresWhatTheSDKReads(t *testing.T) {
 	}
 }
 
+// TestTheManifestListsThePublishedEvents: component.yaml's events.publishes is exactly the event contracts.
+func TestTheManifestListsThePublishedEvents(t *testing.T) {
+	raw, err := os.ReadFile("../component.yaml")
+	require.NoError(t, err)
+	assert.Empty(t, launcher.EventProblems(raw, os.DirFS("../contract/events")))
+}
+
 // TestTheRoutesAreTheOpenAPIDocument: every route is in contract/openapi.yaml with its operation, and nothing else is.
 func TestTheRoutesAreTheOpenAPIDocument(t *testing.T) {
 	raw, err := os.ReadFile("../contract/openapi.yaml")
