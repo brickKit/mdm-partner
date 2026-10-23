@@ -46,7 +46,8 @@ message Stamp {
 message Record {
   string id = 1;
   int64 version = 2;
-  // the canonical JSON of the record: the same payload as its event (events/<type>.schema.json)
+  // the record as JSON: the same payload as its event (events/<type>.schema.json); plain JSON, not the canonical
+  // encoding (security 09a), which only the reconciliation digests use
   bytes data = 3;
 }
 

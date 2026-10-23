@@ -318,7 +318,8 @@ type Record struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	Id      string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Version int64                  `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	// the canonical JSON of the record: the same payload as its event (events/<type>.schema.json)
+	// the record as JSON: the same payload as its event (events/<type>.schema.json); plain JSON, not the canonical
+	// encoding (security 09a), which only the reconciliation digests use
 	Data          []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
