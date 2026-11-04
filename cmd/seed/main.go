@@ -24,6 +24,9 @@
 //	SEED_IAM_URL (http://localhost:18200)    the identity member's development exchange
 //	SEED_AUTHZ_URL (http://localhost:18223)  the authorization member's effect point
 //	SEED_ADMIN (test.alice)                  the authorization admin (the install claim)
+//	SEED_OWNER_KEY                           the deployment owner's private key (PEM): the management unit and its
+//	                                         holding are protected changes, confirmed with it while the admin is the
+//	                                         only authorization admin (infra/authz 3.0.18, A124)
 //	SEED_USER (test.bob), SEED_PASSWORD      the user that writes the data; the test accounts' password
 //	MDM_PARTNER_URL (http://localhost:18225), MDM_ORG_URL (http://localhost:18083)
 package main
@@ -87,6 +90,11 @@ func access(base string) string {
 	check(err)
 	a, err := seed.NewAuthz(effect, accounts[admin].Token, "mdm/partner")
 	check(err)
+	if path := os.Getenv("SEED_OWNER_KEY"); path != "" {
+		key, err := seed.OwnerKey(path)
+		check(err)
+		a = a.WithOwner(key)
+	}
 	read := []sdkauthz.Segment{seed.Segment("mdm.partner", "mdm.partner.read"), seed.Segment("mdm.partner_role", "mdm.partner_role.read")}
 	customerRoles := append(append([]sdkauthz.Segment{}, read...), seed.Segment("mdm.partner_role", "mdm.partner_role.manage"))
 	maintain := append(append([]sdkauthz.Segment{}, customerRoles...), seed.Segment("mdm.partner", "mdm.partner.create"),
