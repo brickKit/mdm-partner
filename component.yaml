@@ -10,7 +10,7 @@ metadata:
 
 dependencies:
   components:
-    - mdm/org@3.0.14
+    - mdm/org@3.0.15
 
 events:
   publishes:
