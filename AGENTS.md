@@ -7,6 +7,7 @@
 | 位置 | 内容 |
 | --- | --- |
 | `partner/definition.go` | 组件定义：身份、依赖 mdm/org、流与事件类型、资源与操作、W |
+| `partner/checks.go` | 整套恢复的核对（线协议第 14 章，SDK 的 `CheckService`，只许恢复工具调用）：本组件审计过的对象按版本答“还在不在”（`Presence`） |
 | `partner/module.go` | 路由与系统面的注册；伙伴的新建（幂等键）、修改、状态；本版不做的路由 |
 | `partner/roles.go` | 客户角色的开通与状态（`legalEntityActive` 同步问 mdm/org）；资格（`eligibility`） |
 | `partner/lists.go` | 伙伴列表 |
