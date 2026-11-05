@@ -244,6 +244,8 @@ func TestPartnerEndToEnd(t *testing.T) {
 	var n int
 	require.NoError(t, admin.QueryRow(ctx, "SELECT count(*) FROM "+itSchema+".be_outbox WHERE record_id = $1", role["id"]).Scan(&n))
 	assert.Equal(t, 3, n, "opened, suspended, resumed")
+
+	t.Run("recovery checks", func(t *testing.T) { checksStory(t, w, admin, Partners, pid) })
 }
 
 // portFree fails at once when a port the member needs is taken: a running cell (host ports 18xxx) or another member

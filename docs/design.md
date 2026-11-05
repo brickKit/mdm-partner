@@ -89,6 +89,8 @@
 
 ## 实现状态
 
+3.0.23（底层先行第 4 项 T10 的级联）：be-sdk-go alpha.92。整套恢复的核对（`CheckService`，操作 `mdm.partner.system.recover`，只许恢复工具调用）：SDK 自带的三项检查；伙伴与角色按版本答“还在不在”；业务变更的审计 `target` 带变更之后的版本（`audit.TargetOf`）。清单的 `RECOVERY_PHASE` 加 `verifying`、`read_only`；依赖 `mdm/org` 3.0.20。
+
 3.0.22（底层先行第 4 项 T9 的级联）：be-sdk-go alpha.87（重放、恢复阶段 `replaying`、转发器停止时放弃租约）；清单的 `RECOVERY_PHASE` 加 `replaying`。依赖：mdm/org@3.0.17 → mdm/org@3.0.19。
 
 3.0.21（底层先行第 4 项 T8 的级联）：be-sdk-go alpha.81（恢复模式、补发与消费者进度）；流的补发（`be.source.v1.ResendService`，操作 `mdm.partner.system.resend`，登记在本组件的 system 资源下，部署内任何组件可调用，线协议 P6.38）；清单声明 `RECOVERY_PHASE`。

@@ -19,7 +19,7 @@ import (
 // Identity of the component.
 const (
 	ID       = "mdm/partner"
-	Version  = "3.0.22"
+	Version  = "3.0.23"
 	GRPCPort = 9225
 	// Org is the component the legal entities belong to: a required dependency.
 	Org = "mdm/org"
@@ -46,7 +46,9 @@ const (
 	// OpResend is the redelivery of this component's stream (be-protocol P6.38: every component with streams serves
 	// it; any component of the deployment may call it).
 	OpResend = "mdm.partner.system.resend"
-	OpSystem = "mdm.partner.system.read"
+	// OpRecover is a full recovery's checks (be-protocol chapter 14: the recovery tool only).
+	OpRecover = "mdm.partner.system.recover"
+	OpSystem  = "mdm.partner.system.read"
 )
 
 // Limits.
@@ -91,12 +93,13 @@ func Definitions() *sdkauthz.Definitions {
 			{Key: OpRole, ResourceType: Roles, Purpose: "manage", RiskClass: "low", SideEffects: []string{"business_write"}, Audit: true},
 			{Key: OpSystem, ResourceType: System, Purpose: "read", RiskClass: "low"},
 			{Key: OpResend, ResourceType: System, Purpose: "read", RiskClass: "low"},
+			{Key: OpRecover, ResourceType: System, Purpose: "read", RiskClass: "low"},
 		}}
 }
 
 // Definition is the component as the launcher and the shells take it.
 func Definition() component.Definition {
 	return component.Definition{ID: ID, Version: Version, Migrations: migrations(), GRPCPort: GRPCPort,
-		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend,
+		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend, Recovery: OpRecover,
 		New: func(rt *runtime.Runtime) (component.Module, error) { return New(rt) }}
 }
