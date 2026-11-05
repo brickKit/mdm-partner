@@ -19,7 +19,7 @@ import (
 // Identity of the component.
 const (
 	ID       = "mdm/partner"
-	Version  = "3.0.20"
+	Version  = "3.0.21"
 	GRPCPort = 9225
 	// Org is the component the legal entities belong to: a required dependency.
 	Org = "mdm/org"
@@ -43,7 +43,10 @@ const (
 	OpRoleRead = "mdm.partner_role.read"
 	OpRole     = "mdm.partner_role.manage"
 	System     = "mdm.partner.system"
-	OpSystem   = "mdm.partner.system.read"
+	// OpResend is the redelivery of this component's stream (be-protocol P6.38: every component with streams serves
+	// it; any component of the deployment may call it).
+	OpResend = "mdm.partner.system.resend"
+	OpSystem = "mdm.partner.system.read"
 )
 
 // Limits.
@@ -87,12 +90,13 @@ func Definitions() *sdkauthz.Definitions {
 			{Key: OpRoleRead, ResourceType: Roles, Purpose: "read", RiskClass: "low"},
 			{Key: OpRole, ResourceType: Roles, Purpose: "manage", RiskClass: "low", SideEffects: []string{"business_write"}, Audit: true},
 			{Key: OpSystem, ResourceType: System, Purpose: "read", RiskClass: "low"},
+			{Key: OpResend, ResourceType: System, Purpose: "read", RiskClass: "low"},
 		}}
 }
 
 // Definition is the component as the launcher and the shells take it.
 func Definition() component.Definition {
 	return component.Definition{ID: ID, Version: Version, Migrations: migrations(), GRPCPort: GRPCPort,
-		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(),
+		Streams: []events.Stream{{Name: Stream, Partitions: 4}}, Authz: Definitions(), Resend: OpResend,
 		New: func(rt *runtime.Runtime) (component.Module, error) { return New(rt) }}
 }

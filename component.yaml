@@ -4,13 +4,13 @@ kind: Component
 metadata:
   id: mdm/partner
   name: Partner
-  version: 3.0.20
+  version: 3.0.21
   description: "Business partners (organizations and persons) with their formal contacts and addresses, their customer roles by legal entity, the eligibility a new document needs and the batch resolution of protocol 07; full-state events and the source methods of protocol 02"
   repository: https://github.com/brickKit/mdm-partner
 
 dependencies:
   components:
-    - mdm/org@3.0.16
+    - mdm/org@3.0.17
 
 events:
   publishes:
@@ -45,6 +45,12 @@ local:
 
 configSchema:
   properties:
+    RECOVERY_PHASE:
+      description: 'process-level: the same for every member of a shell'
+      enum:
+        - frozen
+        - redelivering
+      type: string
     AUDIT_GRPC_URL:
       description: 'process-level: the same for every member of a shell'
       type: string
