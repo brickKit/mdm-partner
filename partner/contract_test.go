@@ -6,6 +6,8 @@ import (
 	"os"
 	"testing"
 
+	core "github.com/brickKit/mdm-partner/v3/internal/core"
+
 	"github.com/brickKit/be-sdk-go/v3/httpx"
 	"github.com/brickKit/be-sdk-go/v3/launcher"
 	"github.com/brickKit/be-sdk-go/v3/mergesafety"
@@ -44,12 +46,12 @@ func TestTheRoutesAreTheOpenAPIDocument(t *testing.T) {
 func TestThePayloadsFitTheirSchemas(t *testing.T) {
 	tax, ccy, terms := "91310000MA1FL4XQ2N", "CNY", "NET30"
 	for typ, v := range map[string]any{
-		PartnerChanged: Partner{ID: "01a15ab0-0000-7000-8000-0000000000c1", Kind: "organization", Name: "上海演示贸易有限公司",
+		core.PartnerChanged: core.Partner{ID: "01a15ab0-0000-7000-8000-0000000000c1", Kind: "organization", Name: "上海演示贸易有限公司",
 			Names: map[string]string{"en": "Shanghai Demo Trading"}, Country: "CN", TaxID: &tax, State: "active",
-			Contacts:  []Contact{{ID: "01a15ab0-0000-7000-8000-0000000000c2", Name: "王小明", Role: "purchasing", Email: "wang@example.com"}},
-			Addresses: []Address{{ID: "01a15ab0-0000-7000-8000-0000000000c3", Kind: "billing", Lines: []string{"浦东新区世纪大道 100 号"}, City: "上海", Country: "CN"}},
+			Contacts:  []core.Contact{{ID: "01a15ab0-0000-7000-8000-0000000000c2", Name: "王小明", Role: "purchasing", Email: "wang@example.com"}},
+			Addresses: []core.Address{{ID: "01a15ab0-0000-7000-8000-0000000000c3", Kind: "billing", Lines: []string{"浦东新区世纪大道 100 号"}, City: "上海", Country: "CN"}},
 			Version:   1, UpdatedAt: "2026-10-20T08:00:00.000000Z"},
-		RoleChanged: Role{ID: "01a15ab0-0000-7000-8000-0000000000c4", PartnerID: "01a15ab0-0000-7000-8000-0000000000c1",
+		core.RoleChanged: core.Role{ID: "01a15ab0-0000-7000-8000-0000000000c4", PartnerID: "01a15ab0-0000-7000-8000-0000000000c1",
 			Role: "customer", LegalEntityID: "01a15ab0-0000-7000-8000-0000000000a1", State: "active", DefaultCurrency: &ccy,
 			PaymentTerms: &terms, Version: 2, UpdatedAt: "2026-10-20T08:00:00.000000Z"},
 	} {

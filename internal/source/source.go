@@ -1,9 +1,12 @@
-package partner
+package source
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	core "github.com/brickKit/mdm-partner/v3/internal/core"
+	roles "github.com/brickKit/mdm-partner/v3/internal/roles"
 
 	"github.com/brickKit/be-sdk-go/v3/db"
 	"github.com/brickKit/be-sdk-go/v3/errs"
@@ -19,22 +22,22 @@ type aggregate struct {
 }
 
 var aggregates = map[partnerv3.Aggregate]aggregate{
-	partnerv3.Aggregate_AGGREGATE_PARTNER: {"partner", partnerCols, func(r pgx.Row) (string, int64, any, error) {
-		v, err := scanPartner(r)
+	partnerv3.Aggregate_AGGREGATE_PARTNER: {"partner", core.PartnerCols, func(r pgx.Row) (string, int64, any, error) {
+		v, err := core.ScanPartner(r)
 		return v.ID, v.Version, v, err
 	}},
-	partnerv3.Aggregate_AGGREGATE_PARTNER_ROLE: {"partner_role", roleCols, func(r pgx.Row) (string, int64, any, error) {
-		v, err := scanRole(r)
+	partnerv3.Aggregate_AGGREGATE_PARTNER_ROLE: {"partner_role", core.RoleCols, func(r pgx.Row) (string, int64, any, error) {
+		v, err := core.ScanRole(r)
 		return v.ID, v.Version, v, err
 	}},
 }
 
-func (m *Module) stamp(ctx context.Context, tx db.Tx) (*partnerv3.Stamp, error) {
-	st, err := events.ReadStamp(ctx, tx, m.instance, events.Stream{Name: Stream, Partitions: 4})
+func stamp(m *core.Base, ctx context.Context, tx db.Tx) (*partnerv3.Stamp, error) {
+	st, err := events.ReadStamp(ctx, tx, m.Instance, events.Stream{Name: core.Stream, Partitions: 4})
 	if err != nil {
 		return nil, err
 	}
-	return &partnerv3.Stamp{Deployment: m.deployment, Instance: st.Instance, Epoch: st.Epoch.String(), Positions: st.Positions}, nil
+	return &partnerv3.Stamp{Deployment: m.Deployment, Instance: st.Instance, Epoch: st.Epoch.String(), Positions: st.Positions}, nil
 }
 
 // readByID reads the records of one aggregate by ID (only well-formed IDs reach the database) and returns the found
@@ -42,7 +45,7 @@ func (m *Module) stamp(ctx context.Context, tx db.Tx) (*partnerv3.Stamp, error) 
 func readByID(ctx context.Context, tx db.Tx, a aggregate, idList []string) (map[string]*partnerv3.Record, error) {
 	var valid []string
 	for _, id := range idList {
-		if uuidForm.MatchString(id) {
+		if core.UUIDForm.MatchString(id) {
 			valid = append(valid, id)
 		}
 	}
@@ -70,28 +73,28 @@ func readByID(ctx context.Context, tx db.Tx, a aggregate, idList []string) (map[
 }
 
 // Snapshot pages through one aggregate by ID, with the stamp of the same snapshot (protocol 02, S3).
-func (m *Module) Snapshot(ctx context.Context, in *partnerv3.SnapshotRequest) (*partnerv3.SnapshotResponse, error) {
+func Snapshot(m *core.Base, ctx context.Context, in *partnerv3.SnapshotRequest) (*partnerv3.SnapshotResponse, error) {
 	a, ok := aggregates[in.GetAggregate()]
 	if !ok {
-		return nil, invalid("aggregate", "an aggregate of this component")
+		return nil, core.Invalid("aggregate", "an aggregate of this component")
 	}
 	limit := int(in.GetLimit())
 	if limit == 0 {
-		limit = MaxBatch
+		limit = core.MaxBatch
 	}
-	if limit < 0 || limit > MaxBatch {
-		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d records a page", MaxBatch))
+	if limit < 0 || limit > core.MaxBatch {
+		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d records a page", core.MaxBatch))
 	}
 	after := in.GetCursor()
 	if after == "" {
 		after = "00000000-0000-0000-0000-000000000000"
-	} else if !uuidForm.MatchString(after) {
+	} else if !core.UUIDForm.MatchString(after) {
 		return nil, errs.New(errs.ReasonCursorInvalid, "the cursor cannot be read")
 	}
 	out := &partnerv3.SnapshotResponse{}
-	err := m.rt.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
+	err := m.RT.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
 		var err error
-		if out.Stamp, err = m.stamp(ctx, tx); err != nil {
+		if out.Stamp, err = stamp(m, ctx, tx); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, fmt.Sprintf(`SELECT %s FROM %s WHERE id > $1::uuid ORDER BY id LIMIT %d`,
@@ -124,19 +127,19 @@ func (m *Module) Snapshot(ctx context.Context, in *partnerv3.SnapshotRequest) (*
 }
 
 // Read answers by ID in the requested order: exists, or purged (nothing is deleted in this version).
-func (m *Module) Read(ctx context.Context, in *partnerv3.ReadRequest) (*partnerv3.ReadResponse, error) {
+func Read(m *core.Base, ctx context.Context, in *partnerv3.ReadRequest) (*partnerv3.ReadResponse, error) {
 	a, ok := aggregates[in.GetAggregate()]
 	if !ok {
-		return nil, invalid("aggregate", "an aggregate of this component")
+		return nil, core.Invalid("aggregate", "an aggregate of this component")
 	}
-	if len(in.GetIds()) > MaxBatch {
-		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d IDs a call", MaxBatch))
+	if len(in.GetIds()) > core.MaxBatch {
+		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d IDs a call", core.MaxBatch))
 	}
 	out := &partnerv3.ReadResponse{}
 	var found map[string]*partnerv3.Record
-	err := m.rt.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
+	err := m.RT.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
 		var err error
-		if out.Stamp, err = m.stamp(ctx, tx); err != nil {
+		if out.Stamp, err = stamp(m, ctx, tx); err != nil {
 			return err
 		}
 		found, err = readByID(ctx, tx, a, in.GetIds())
@@ -159,8 +162,8 @@ var purposes = map[partnerv3.Purpose]string{partnerv3.Purpose_PURPOSE_SELL: "sel
 	partnerv3.Purpose_PURPOSE_PURCHASE: "purchase", partnerv3.Purpose_PURPOSE_PAY_EMPLOYEE: "pay_employee"}
 
 // CheckEligibility is PartnerService.CheckEligibility (the same answer as GET /api/partner/eligibility).
-func (m *Module) CheckEligibility(ctx context.Context, in *partnerv3.CheckEligibilityRequest) (*partnerv3.CheckEligibilityResponse, error) {
-	e, err := m.eligibility(ctx, in.GetPartnerId(), in.GetLegalEntityId(), purposes[in.GetPurpose()])
+func CheckEligibility(m *core.Base, ctx context.Context, in *partnerv3.CheckEligibilityRequest) (*partnerv3.CheckEligibilityResponse, error) {
+	e, err := roles.EligibilityOf(m, ctx, in.GetPartnerId(), in.GetLegalEntityId(), purposes[in.GetPurpose()])
 	if err != nil {
 		return nil, err
 	}
@@ -170,12 +173,12 @@ func (m *Module) CheckEligibility(ctx context.Context, in *partnerv3.CheckEligib
 
 // Resolve answers protocol 07's resolution by ID: current, or not found (no merges or erasure in this version, so no
 // aliases or tombstones yet).
-func (m *Module) Resolve(ctx context.Context, in *partnerv3.ResolveRequest) (*partnerv3.ResolveResponse, error) {
-	if len(in.GetIds()) > MaxBatch {
-		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d IDs a call", MaxBatch))
+func Resolve(m *core.Base, ctx context.Context, in *partnerv3.ResolveRequest) (*partnerv3.ResolveResponse, error) {
+	if len(in.GetIds()) > core.MaxBatch {
+		return nil, errs.New(errs.ReasonBatchTooLarge, fmt.Sprintf("at most %d IDs a call", core.MaxBatch))
 	}
 	var found map[string]*partnerv3.Record
-	err := m.rt.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
+	err := m.RT.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
 		var err error
 		found, err = readByID(ctx, tx, aggregates[partnerv3.Aggregate_AGGREGATE_PARTNER], in.GetIds())
 		return err

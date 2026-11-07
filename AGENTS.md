@@ -4,33 +4,40 @@
 
 ## 代码地图
 
-| 位置 | 内容 |
+代码按业务模块分层。**先读这一节，再进目录**：每个代码目录都有自己的 `AGENTS.md`（同目录的 `CLAUDE.md` 让 Claude Code 读这个目录的文件时自动带上它），写这一层负责什么、不负责什么、每个文件、依赖谁、测在哪。
+
+| 目录 | 是什么 |
 | --- | --- |
-| `partner/definition.go` | 组件定义：身份、依赖 mdm/org、流与事件类型、资源与操作、W |
-| `partner/checks.go` | 整套恢复的核对（线协议第 14 章，SDK 的 `CheckService`，只许恢复工具调用）：本组件审计过的对象按版本答“还在不在”（`Presence`） |
-| `partner/module.go` | 路由与系统面的注册；伙伴的新建（幂等键）、修改、状态；本版不做的路由 |
-| `partner/roles.go` | 客户角色的开通与状态（`legalEntityActive` 同步问 mdm/org）；资格（`eligibility`） |
-| `partner/lists.go` | 伙伴列表 |
-| `partner/records.go` | 记录的类型、读取、税号重复（`duplicates`）、事件 |
-| `partner/source.go` | 系统面：来源方法、资格查询、批量解析 |
+| [`partner/`](partner/AGENTS.md) | 入口：组件定义与组装（路由、系统面、恢复核对都在这里登记，转给业务模块）；不写业务。`main.go` 与外壳只引用它 |
+| [`internal/`](internal/AGENTS.md) | 业务：下面的模块各一个包；模块之间的依赖表在它的 `AGENTS.md` |
+| [`itest/`](itest/AGENTS.md) | 集成测试，按业务流程分文件；它的 `AGENTS.md` 是测试索引 |
 | `partner/migrations/` | 表：伙伴、角色 |
 | `cmd/seed/` | 种子：角色与授予、管理单元「中国区客户」与委派、伙伴、地址与联系人、各法人的客户角色（`make seed`） |
 | `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml`；事件 schema 同时是来源方法的 `data` 与 OpenAPI 的形状 |
 | `docs/design.md` | 设计：术语、表、状态与规则、命令、事件、依赖、实现状态、未决问题 |
 
+业务模块（`internal/` 下）：
+
+| 模块 | 负责 | 拥有的表 |
+| --- | --- | --- |
+| [`partners`](internal/partners/AGENTS.md) | 伙伴：新建（幂等键）、修改、状态、列表；税号的规范化与查重 | `partner` |
+| [`roles`](internal/roles/AGENTS.md) | 按法人开通的客户角色与它的状态；资格（新单据此刻能不能引用这个伙伴） | `partner_role` |
+| [`source`](internal/source/AGENTS.md) | 系统面：来源方法、资格查询、批量解析 | — |
+
+共用的：[`core`](internal/core/AGENTS.md)（名字与资源定义、校验、审计与事件的写法、记录的类型与读取、税号查重的查询、本版不做的路由）。
+
 | 想改 | 从这里开始 | 然后 |
 | --- | --- | --- |
-| 资格的规则 | `roles.go` 的 `eligibility` | 集成测试的资格一段；第 7 步销售的资格取证 |
-| 开通角色的前提 | `roles.go` 的 `putCustomerRole`、`legalEntityActive` | 集成测试里 mdm/org 的替身 |
-| 加一种角色 | `migrations` 的 `role` 约束、`roleOf` | 契约的 `Purpose`、OpenAPI |
-| 税号查重或规范化 | `records.go` 的 `duplicates`、`module.go` 的 `partnerIn.apply` | 集成测试的重复税号一段 |
+| 资格的规则 | `internal/roles` 的 `EligibilityOf` | `itest/eligibility_integration_test.go`；第 7 步销售的资格取证 |
+| 开通角色的前提 | `internal/roles` 的 `PutCustomerRole`、`legalEntityActive` | `itest/roles_integration_test.go`（组织组件 mdm/org 的替身） |
+| 加一种角色 | `migrations` 的 `role` 约束、`internal/roles` 的 `roleOf` | 契约的 `Purpose`、OpenAPI |
+| 税号查重或规范化 | `internal/core/records.go` 的 `Duplicates`、`internal/partners` 的 `partnerIn.apply` | `itest/partners_integration_test.go` |
 | 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 
 ## 构建与测试
 
 - `go test ./...`（`make test`）：清单的 `configSchema` 与 `events`、OpenAPI 与路由、事件载荷、合并安全。
-- `go test -tags integration ./partner/`（`make test-integration`）：真实的 PostgreSQL 与消息系统，例如 `BE_SDK_TEST_PG_ADMIN=postgres://postgres:<口令>@localhost:5432/brickkit_test_db`（口令是装配项目 `.env` 的 `POSTGRES_PASSWORD`）与 `BE_SDK_TEST_NATS_URL=nats://localhost:4222`。be-sdk-go 的 `sectest` 是测试部署；`mdm/org` 是按它发布的契约写的替身（引入的是它的契约模块，不是代码）。
-- 集成测试的前提：装配项目里 `make up` 起了 `be-postgres` 与 `be-nats`；`be-postgres` 里有库 `brickkit_test_db`（没有就 `docker exec be-postgres createdb -U postgres brickkit_test_db`；`make test-db-init` 的组件清单还是旧的，不认这个组件）；测试每次开始时删掉再建自己的 schema `mdm_partner_it`，跑完留着；端口 28225、9225 与替身 `mdm/org` 的 19093 要空着，被占时测试直接失败。
+- `make test-integration`（`go test -tags integration ./itest/`）：真实的 PostgreSQL 与消息系统；每个文件测哪条流程、要什么前提，在 [itest/AGENTS.md](itest/AGENTS.md)。
 - `brickkit lint`
 
 ## 设计取舍

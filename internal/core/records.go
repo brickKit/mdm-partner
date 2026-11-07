@@ -1,4 +1,4 @@
-package partner
+package core
 
 import (
 	"context"
@@ -61,12 +61,12 @@ type Role struct {
 }
 
 const (
-	partnerCols = `id::text, kind, name, names, country, tax_id, state, contacts, addresses, version, updated_at`
-	roleCols    = `id::text, partner_id::text, role, legal_entity_id::text, state, default_currency, payment_terms, version,
+	PartnerCols = `id::text, kind, name, names, country, tax_id, state, contacts, addresses, version, updated_at`
+	RoleCols    = `id::text, partner_id::text, role, legal_entity_id::text, state, default_currency, payment_terms, version,
 		updated_at`
 )
 
-func scanPartner(row pgx.Row) (Partner, error) {
+func ScanPartner(row pgx.Row) (Partner, error) {
 	var p Partner
 	var names, contacts, addresses []byte
 	var at time.Time
@@ -79,7 +79,7 @@ func scanPartner(row pgx.Row) (Partner, error) {
 		json.Unmarshal(addresses, &p.Addresses))
 }
 
-func scanRole(row pgx.Row) (Role, error) {
+func ScanRole(row pgx.Row) (Role, error) {
 	var r Role
 	var at time.Time
 	err := row.Scan(&r.ID, &r.PartnerID, &r.Role, &r.LegalEntityID, &r.State, &r.DefaultCurrency, &r.PaymentTerms,
@@ -89,34 +89,34 @@ func scanRole(row pgx.Row) (Role, error) {
 }
 
 // errNone is a lookup that found no row.
-var errNone = errors.New("no such record")
+var ErrNone = errors.New("no such record")
 
 func one[T any](row pgx.Row, scan func(pgx.Row) (T, error)) (T, error) {
 	v, err := scan(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return v, errNone
+		return v, ErrNone
 	}
 	return v, err
 }
 
-func getPartner(ctx context.Context, tx db.Tx, id string, lock bool) (Partner, error) {
-	q := `SELECT ` + partnerCols + ` FROM partner WHERE id = $1::uuid`
+func GetPartner(ctx context.Context, tx db.Tx, id string, lock bool) (Partner, error) {
+	q := `SELECT ` + PartnerCols + ` FROM partner WHERE id = $1::uuid`
 	if lock {
 		q += ` FOR UPDATE`
 	}
-	return one(tx.QueryRow(ctx, q, id), scanPartner)
+	return one(tx.QueryRow(ctx, q, id), ScanPartner)
 }
 
-func getRole(ctx context.Context, tx db.Tx, partner, role, legalEntity string, lock bool) (Role, error) {
-	q := `SELECT ` + roleCols + ` FROM partner_role WHERE partner_id = $1::uuid AND role = $2 AND legal_entity_id = $3::uuid`
+func GetRole(ctx context.Context, tx db.Tx, partner, role, legalEntity string, lock bool) (Role, error) {
+	q := `SELECT ` + RoleCols + ` FROM partner_role WHERE partner_id = $1::uuid AND role = $2 AND legal_entity_id = $3::uuid`
 	if lock {
 		q += ` FOR UPDATE`
 	}
-	return one(tx.QueryRow(ctx, q, partner, role, legalEntity), scanRole)
+	return one(tx.QueryRow(ctx, q, partner, role, legalEntity), ScanRole)
 }
 
-// duplicates are the other partners with the same tax ID in the same country (D22: pointed out, merged by hand).
-func duplicates(ctx context.Context, tx db.Tx, p Partner) ([]string, error) {
+// Duplicates are the other partners with the same tax ID in the same country (D22: pointed out, merged by hand).
+func Duplicates(ctx context.Context, tx db.Tx, p Partner) ([]string, error) {
 	out := []string{}
 	if p.TaxID == nil {
 		return out, nil
@@ -137,9 +137,9 @@ func duplicates(ctx context.Context, tx db.Tx, p Partner) ([]string, error) {
 	return out, rows.Err()
 }
 
-// emit writes the record's full-state event into the outbox, in the transaction that changed it (protocol 02, S2).
-func (m *Module) emit(ctx context.Context, tx db.Tx, typ, id string, version int64, data any) error {
-	_, err := m.rt.Events.Emit(ctx, tx, Stream, events.Event{Type: typ, RecordID: id, Version: version,
+// Emit writes the record's full-state event into the outbox, in the transaction that changed it (protocol 02, S2).
+func Emit(m *Base, ctx context.Context, tx db.Tx, typ, id string, version int64, data any) error {
+	_, err := m.RT.Events.Emit(ctx, tx, Stream, events.Event{Type: typ, RecordID: id, Version: version,
 		Projection: events.Full, Data: data})
 	return err
 }
