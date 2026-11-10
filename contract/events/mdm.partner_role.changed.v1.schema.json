@@ -9,7 +9,7 @@
   "properties": {
     "id": {"type": "string", "format": "uuid"},
     "partner_id": {"type": "string", "format": "uuid"},
-    "role": {"enum": ["customer"], "description": "supplier, employee payee and affiliate come later"},
+    "role": {"enum": ["customer", "supplier"], "description": "employee payee and affiliate come later"},
     "legal_entity_id": {"type": "string", "format": "uuid"},
     "state": {"enum": ["active", "suspended", "retired"]},
     "default_currency": {"type": ["string", "null"], "pattern": "^[A-Z]{3}$"},

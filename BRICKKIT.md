@@ -10,7 +10,7 @@
 
 信用额度不在这里（`erp/credit`），CRM 私有的关系不在这里（`crm/customer`）。
 
-实验第 6 步的范围：只有客户角色；扩展字段（协议 08）还没有，等 SDK 支持。供应商、员工往来与关联方角色、合并与拆回、伙伴银行账户、销毁与擦除都在契约里，调用答“能力不支持”（`CAPABILITY_UNSUPPORTED`，D75）。
+客户与供应商角色（供应商 3.0.39 起，两种角色各自开通、各有状态与缺省）；扩展字段（协议 08）还没有，等 SDK 支持。员工往来与关联方角色、合并与拆回、伙伴银行账户、销毁与擦除都在契约里，调用答“能力不支持”（`CAPABILITY_UNSUPPORTED`，D75）。
 
 ## 部署前准备
 
@@ -42,7 +42,7 @@ mdm/org 的地址由 BrickKit 按依赖注入（`MDM_ORG_GRPC_ENDPOINT`），不
 
 - **系统面**（本仓库 `contract/proto`，模块 `github.com/brickKit/mdm-partner/contract/v3`，标签 `contract/v3.…`）：
   - `be.mdm.partner.v3.SourceService/Snapshot`、`Read`：协议 02 的来源方法，聚合是伙伴与角色；回答带部署、实现实例、纪元与各分区位置高点；一次最多 500 个。
-  - `be.mdm.partner.v3.PartnerService/CheckEligibility`：资格查询（用途 `PURPOSE_SELL` 需要客户角色）。
+  - `be.mdm.partner.v3.PartnerService/CheckEligibility`：资格查询（用途 `PURPOSE_SELL` 需要客户角色，`PURPOSE_PURCHASE` 需要供应商角色）。
   - `be.mdm.partner.v3.PartnerService/Resolve`：批量解析，一次最多 500 个。
 - **用户面**：`contract/openapi.yaml`。操作 `mdm.partner.read`、`mdm.partner.create`、`mdm.partner.edit`、`mdm.partner.merge`、`mdm.partner_role.manage`。新建伙伴要带 `Idempotency-Key`。
 - **事件**（流 `mdm.partner`，schema 在 `contract/events/`）：`mdm.partner.changed.v1`、`mdm.partner_role.changed.v1`，都是完整状态。

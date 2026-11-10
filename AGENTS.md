@@ -21,7 +21,7 @@
 | 模块 | 负责 | 拥有的表 |
 | --- | --- | --- |
 | [`partners`](internal/partners/AGENTS.md) | 伙伴：新建（幂等键）、修改、状态、列表；税号的规范化与查重 | `partner` |
-| [`roles`](internal/roles/AGENTS.md) | 按法人开通的客户角色与它的状态；资格（新单据此刻能不能引用这个伙伴） | `partner_role` |
+| [`roles`](internal/roles/AGENTS.md) | 按法人开通的客户、供应商角色与它们的状态；资格（新单据此刻能不能引用这个伙伴） | `partner_role` |
 | [`source`](internal/source/AGENTS.md) | 系统面：来源方法、资格查询、批量解析 | — |
 
 共用的：[`core`](internal/core/AGENTS.md)（名字与资源定义、校验、审计与事件的写法、记录的类型与读取、税号查重的查询、本版不做的路由）。
@@ -29,8 +29,8 @@
 | 想改 | 从这里开始 | 然后 |
 | --- | --- | --- |
 | 资格的规则 | `internal/roles` 的 `EligibilityOf` | `itest/eligibility_integration_test.go`；第 7 步销售的资格取证 |
-| 开通角色的前提 | `internal/roles` 的 `PutCustomerRole`、`legalEntityActive` | `itest/roles_integration_test.go`（组织组件 mdm/org 的替身） |
-| 加一种角色 | `migrations` 的 `role` 约束、`internal/roles` 的 `roleOf` | 契约的 `Purpose`、OpenAPI |
+| 开通角色的前提 | `internal/roles` 的 `putRole`、`legalEntityActive` | `itest/roles_integration_test.go`（组织组件 mdm/org 的替身） |
+| 加一种角色 | `migrations` 的 `role` 约束（3.0.39 加供应商的 `0002`）、`internal/roles` 的 `roleOf` 与两个路由的包装 | 契约的 `Purpose`、OpenAPI |
 | 税号查重或规范化 | `internal/core/records.go` 的 `Duplicates`、`internal/partners` 的 `partnerIn.apply` | `itest/partners_integration_test.go` |
 | 加字段、加接口、改事件 | 装配项目 be-assembly-standard 规范里的“改动配方” | `docs/design.md` 的数据与命令 |
 

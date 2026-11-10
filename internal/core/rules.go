@@ -32,7 +32,7 @@ func Unsupported(c *httpx.Context) error {
 	if _, _, err := Check(c, c.Operation()); err != nil {
 		return err
 	}
-	return errs.New(errs.ReasonCapabilityUnsupported, "not in this version of mdm/partner (supplier and employee "+
+	return errs.New(errs.ReasonCapabilityUnsupported, "not in this version of mdm/partner (employee payee and affiliate "+
 		"roles, merging, bank accounts come later)")
 }
 

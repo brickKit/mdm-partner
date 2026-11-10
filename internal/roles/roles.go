@@ -80,9 +80,14 @@ type roleIn struct {
 	PaymentTerms    *string `json:"payment_terms"`
 }
 
-// PutCustomerRole opens the customer role in a legal entity (which mdm/org says is active now) or changes its
-// defaults; the same content again changes nothing. A retired role stays retired.
-func PutCustomerRole(m *core.Base, c *httpx.Context) error {
+// PutCustomerRole and PutSupplierRole open a role in a legal entity (which mdm/org says is active now) or change its
+// defaults; the same content again changes nothing. A retired role stays retired. The two roles are apart: each has
+// its own state and defaults (receivables and payables stay independent).
+func PutCustomerRole(m *core.Base, c *httpx.Context) error { return putRole(m, c, "customer") }
+
+func PutSupplierRole(m *core.Base, c *httpx.Context) error { return putRole(m, c, "supplier") }
+
+func putRole(m *core.Base, c *httpx.Context, kind string) error {
 	ctx, actor, err := core.Check(c, core.OpRole)
 	if err != nil {
 		return err
@@ -116,12 +121,12 @@ func PutCustomerRole(m *core.Base, c *httpx.Context) error {
 		if p.State != "active" {
 			return core.ErrState.New("the partner is " + p.State + ": no roles are opened or changed")
 		}
-		cur, err := core.GetRole(ctx, tx, pid, "customer", le, true)
+		cur, err := core.GetRole(ctx, tx, pid, kind, le, true)
 		switch {
 		case errors.Is(err, core.ErrNone):
 			id := ids.New().String()
 			if _, err := tx.Exec(ctx, `INSERT INTO partner_role (id, partner_id, role, legal_entity_id, default_currency,
-				payment_terms) VALUES ($1, $2, 'customer', $3, $4, $5)`, id, pid, le, in.DefaultCurrency, in.PaymentTerms); err != nil {
+				payment_terms) VALUES ($1, $2, $3, $4, $5, $6)`, id, pid, kind, le, in.DefaultCurrency, in.PaymentTerms); err != nil {
 				return err
 			}
 		case err != nil:
@@ -137,7 +142,7 @@ func PutCustomerRole(m *core.Base, c *httpx.Context) error {
 				return err
 			}
 		}
-		if out, err = core.GetRole(ctx, tx, pid, "customer", le, false); err != nil {
+		if out, err = core.GetRole(ctx, tx, pid, kind, le, false); err != nil {
 			return err
 		}
 		if err := core.Emit(m, ctx, tx, core.RoleChanged, out.ID, out.Version, out); err != nil {
@@ -154,8 +159,12 @@ func PutCustomerRole(m *core.Base, c *httpx.Context) error {
 	return c.JSON(200, out)
 }
 
-// CustomerRoleState suspends, resumes or retires the customer role; a retired role stays retired.
-func CustomerRoleState(m *core.Base, c *httpx.Context) error {
+// CustomerRoleState and SupplierRoleState suspend, resume or retire a role; a retired role stays retired.
+func CustomerRoleState(m *core.Base, c *httpx.Context) error { return roleState(m, c, "customer") }
+
+func SupplierRoleState(m *core.Base, c *httpx.Context) error { return roleState(m, c, "supplier") }
+
+func roleState(m *core.Base, c *httpx.Context, kind string) error {
 	ctx, actor, err := core.Check(c, core.OpRole)
 	if err != nil {
 		return err
@@ -176,7 +185,7 @@ func CustomerRoleState(m *core.Base, c *httpx.Context) error {
 	}
 	var out core.Role
 	err = m.RT.DB.Tx(ctx, func(ctx context.Context, tx db.Tx) error {
-		cur, err := core.GetRole(ctx, tx, pid, "customer", le, true)
+		cur, err := core.GetRole(ctx, tx, pid, kind, le, true)
 		if err != nil {
 			return err
 		}
@@ -194,7 +203,7 @@ func CustomerRoleState(m *core.Base, c *httpx.Context) error {
 			WHERE id = $1`, cur.ID, in.State); err != nil {
 			return err
 		}
-		if out, err = core.GetRole(ctx, tx, pid, "customer", le, false); err != nil {
+		if out, err = core.GetRole(ctx, tx, pid, kind, le, false); err != nil {
 			return err
 		}
 		if err := core.Emit(m, ctx, tx, core.RoleChanged, out.ID, out.Version, out); err != nil {
@@ -228,7 +237,9 @@ func roleOf(purpose string) (string, bool) {
 	switch purpose {
 	case "sell":
 		return "customer", true
-	case "purchase", "pay_employee":
+	case "purchase":
+		return "supplier", true
+	case "pay_employee":
 		return "", false
 	}
 	return "", false
@@ -237,7 +248,7 @@ func roleOf(purpose string) (string, bool) {
 func EligibilityOf(m *core.Base, ctx context.Context, partnerID, legalEntity, purpose string) (Eligibility, error) {
 	role, ok := roleOf(purpose)
 	if !ok {
-		if purpose == "purchase" || purpose == "pay_employee" {
+		if purpose == "pay_employee" {
 			return Eligibility{}, errs.New(errs.ReasonCapabilityUnsupported, "the "+purpose+" purpose needs a role not in this version")
 		}
 		return Eligibility{}, core.Invalid("purpose", "purpose is sell, purchase or pay_employee")

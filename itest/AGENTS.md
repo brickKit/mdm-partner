@@ -17,7 +17,7 @@
 | --- | --- | --- | --- |
 | `partners_integration_test.go` | `partners`、`partnerEdits` | 新建伙伴一个幂等键一次，没有键被拒；同国家同税号提示、不拒绝（D22）；过期的版本被拒、关键字找拼音首字母、没有授予看不见、合并本版不做 | `partners`、`core` |
 | `roles_integration_test.go` | `roles` | 按法人开通客户角色；法人暂停或不存在被拒；`mdm/org` 不可达时角色不开通、原因不是“法人不可用”（协议 07） | `roles` |
-| `eligibility_integration_test.go` | `eligibility` | 没开角色的法人不能卖；角色暂停、伙伴暂停（RF01）各答原因；供应商角色本版不做 | `roles` |
+| `eligibility_integration_test.go` | `eligibility` | 没开角色的法人不能卖；角色暂停、伙伴暂停（RF01）各答原因；供应商角色（3.0.39）：采购要它，与客户角色各自开通、暂停 | `roles` |
 | `source_integration_test.go` | `source` | 系统面（mTLS）：资格、批量解析（当前、不存在）、来源读取与戳 | `source` |
 | `outbox_integration_test.go` | `outbox` | 客户角色的完整状态事件：开通、暂停、恢复各一条 | `roles`、`core` |
 | `recoverycheck_integration_test.go` | `recoveryChecks` | 整套恢复的核对：伙伴按版本答“还在不在”（`checksStory`） | 入口 `partner/checks.go` |

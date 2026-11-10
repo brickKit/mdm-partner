@@ -5,9 +5,9 @@ info:
   description: >-
     Business partners, their formal contacts and addresses, and their roles by legal entity, for people and the front
     end. Every route needs a platform access token and the operation in x-operation; what the caller may not see
-    answers 404. Errors are application/problem+json with a reason. Lists page by cursor only (protocol 14). Supplier,
-    employee payee and affiliate roles, merging and splitting, bank accounts and erasure are in the contract but not
-    in step 6: they answer CAPABILITY_UNSUPPORTED (D75).
+    answers 404. Errors are application/problem+json with a reason. Lists page by cursor only (protocol 14). Customer
+    and supplier roles (the supplier role 3.0.39 on); employee payee and affiliate roles, merging and splitting, bank
+    accounts and erasure are in the contract but not in this version: they answer CAPABILITY_UNSUPPORTED (D75).
 paths:
   /api/partner/partners:
     get:
@@ -145,6 +145,46 @@ paths:
       responses:
         '200': {description: the role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
         default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles/supplier/{legal_entity_id}:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    put:
+      operationId: putSupplierRole
+      x-operation: mdm.partner_role.manage
+      summary: Open the supplier role (3.0.39) in a legal entity, or change its defaults; the same content again changes nothing
+      description: >-
+        The legal entity must exist and be active in mdm/org, asked at this moment; when mdm/org cannot answer, the
+        role is not opened (unreachable is not "does not exist", protocol 07).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                default_currency: {type: [string, 'null']}
+                payment_terms: {type: [string, 'null']}
+      responses:
+        '200': {description: the role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        default: {$ref: '#/components/responses/problem'}
+  /api/partner/partners/{id}/roles/supplier/{legal_entity_id}/state:
+    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
+    post:
+      operationId: changeSupplierRoleState
+      x-operation: mdm.partner_role.manage
+      summary: Suspend, resume or retire the supplier role (3.0.39); a retired role stays retired
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [state]
+              properties: {state: {enum: [active, suspended, retired]}, version: {type: integer}}
+      responses:
+        '200': {description: the role, content: {application/json: {schema: {$ref: '#/components/schemas/Role'}}}}
+        default: {$ref: '#/components/responses/problem'}
   /api/partner/eligibility:
     get:
       operationId: eligibility
@@ -170,9 +210,6 @@ paths:
                   role_version: {type: integer}
                   evaluated_at: {type: string, format: date-time}
         default: {$ref: '#/components/responses/problem'}
-  /api/partner/partners/{id}/roles/supplier/{legal_entity_id}:
-    parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
-    put: {operationId: putSupplierRole, x-operation: mdm.partner_role.manage, summary: 'Not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}
   /api/partner/partners/{id}/roles/employee/{legal_entity_id}:
     parameters: [{$ref: '#/components/parameters/id'}, {$ref: '#/components/parameters/legal_entity_id'}]
     put: {operationId: putEmployeeRole, x-operation: mdm.partner_role.manage, summary: 'Opened by mdm/employee with a business confirmation (D69); not in step 6: CAPABILITY_UNSUPPORTED', responses: {default: {$ref: '#/components/responses/problem'}}}

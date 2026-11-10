@@ -38,10 +38,11 @@ func (m *Module) Routes(r *httpx.Routes) error {
 	add("GET", "/api/partner/partners/:id/roles", core.OpRead, h(roles.ListRoles))
 	add("PUT", "/api/partner/partners/:id/roles/customer/:legal_entity_id", core.OpRole, h(roles.PutCustomerRole))
 	add("POST", "/api/partner/partners/:id/roles/customer/:legal_entity_id/state", core.OpRole, h(roles.CustomerRoleState))
+	add("PUT", "/api/partner/partners/:id/roles/supplier/:legal_entity_id", core.OpRole, h(roles.PutSupplierRole))
+	add("POST", "/api/partner/partners/:id/roles/supplier/:legal_entity_id/state", core.OpRole, h(roles.SupplierRoleState))
 	add("GET", "/api/partner/eligibility", core.OpRead, h(roles.EligibilityHTTP))
 	// in the contract, not in step 6 (D75)
 	for _, u := range []struct{ method, path, op string }{
-		{"PUT", "/api/partner/partners/:id/roles/supplier/:legal_entity_id", core.OpRole},
 		{"PUT", "/api/partner/partners/:id/roles/employee/:legal_entity_id", core.OpRole},
 		{"POST", "/api/partner/partners/:id/merge", core.OpMerge},
 		{"POST", "/api/partner/partners/:id/split", core.OpMerge},
