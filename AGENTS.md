@@ -12,7 +12,7 @@
 | [`internal/`](internal/AGENTS.md) | 业务：下面的模块各一个包；模块之间的依赖表在它的 `AGENTS.md` |
 | [`itest/`](itest/AGENTS.md) | 集成测试，按业务流程分文件；它的 `AGENTS.md` 是测试索引 |
 | `partner/migrations/` | 表：伙伴、角色 |
-| `cmd/seed/` | 种子：角色与授予、管理单元「中国区客户」与委派、伙伴、地址与联系人、各法人的客户角色（`make seed`） |
+| `cmd/seed/` | 种子：角色与授予、管理单元「中国区客户」与委派、伙伴、地址与联系人、各法人的客户角色与供应商角色（`make seed`） |
 | `contract/` | 本组件发布的契约，单独的模块：`contract/proto/`、`contract/events/`、`contract/openapi.yaml`；事件 schema 同时是来源方法的 `data` 与 OpenAPI 的形状 |
 | `docs/design.md` | 设计：术语、表、状态与规则、命令、事件、依赖、实现状态、未决问题 |
 

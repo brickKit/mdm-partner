@@ -12,11 +12,15 @@
 //   - customer roles in every usable legal entity, in local and foreign currencies with varied payment terms; roles in
 //     HK01, which is suspended: they were opened while it was active (the seed resumes HK01, opens them and suspends it
 //     again, only while they are missing), so a document for them meets a legal entity that cannot be used;
-//   - the negative data each eligibility answer needs: a suspended and a retired partner, suspended and retired roles,
-//     partners without a role in ES01 or US01, two partners sharing a tax ID (a merge candidate, D22).
+//   - supplier roles (3.0.40): 12 Chinese organizations that only supply (raw materials and services), and some
+//     customers that also supply, in CN01, ES01 and US01, in local and foreign currencies with varied payment terms;
+//   - the negative data each eligibility answer needs: a suspended and a retired partner, suspended and retired roles
+//     (customer and supplier), partners without a role in ES01 or US01, two partners sharing a tax ID (a merge
+//     candidate, D22).
 //
 // Idempotency keys: the first seed's 0-63, 100-105, 200-204 and 300-302 stay; the partners added later take
-// 1000-1119 (China), 1500-1529 (Spain), 2000-2024 (the US), 2100-2105 (Hong Kong) and 2200-2224 (persons).
+// 1000-1119 (China), 1500-1529 (Spain), 2000-2024 (the US), 2100-2105 (Hong Kong), 2200-2224 (persons) and 2300-2311
+// (the suppliers only).
 // Partners are found again by their name before they are created and their contacts and addresses are set only when
 // they differ, so a second run changes nothing; the legal entities are looked up by code in mdm/org (its seed runs
 // first: make seed).
@@ -297,6 +301,15 @@ func main() {
 			"contacts": contacts(i, false, 1), "addresses": addresses(i, "HK", "香港", "演示道")})
 		orgs = append(orgs, made{id, "HK", i})
 	}
+	// suppliers only: no customer role anywhere
+	var suppliers []string
+	for i, trade := range []string{"原料", "包装", "设备", "办公用品", "物流服务", "维修服务", "原料", "包装", "设备", "办公用品",
+		"物流服务", "维修服务"} {
+		city := cities[i%8]
+		suppliers = append(suppliers, partner(2300+i, fmt.Sprintf("%s演示%s供应有限公司 %02d", city, trade, i), map[string]any{
+			"kind": "organization", "country": "CN", "tax_id": fmt.Sprintf("91310000SUPP%04dX", i),
+			"contacts": contacts(200+i, false, 1), "addresses": addresses(200+i, "CN", city, "供应路")}))
+	}
 	type person struct{ name, country string }
 	people := []person{{"张伟", "CN"}, {"李娜", "CN"}, {"王芳", "CN"}, {"Lucía García", "ES"}, {"Carlos Martín", "ES"}}
 	for _, name := range []string{"赵敏", "钱伟", "孙丽", "周杰", "吴芳", "郑浩", "冯雪", "陈晨", "褚明", "卫兰"} {
@@ -367,6 +380,37 @@ func main() {
 	for _, p := range []string{suspended, retired} {
 		role(p, "CN01", "CNY", "NET30")
 	}
+	sroles := 0
+	supplierRole := func(p, le, ccy, terms string) {
+		code, out := c.do("PUT", "/api/partner/partners/"+p+"/roles/supplier/"+les[le], map[string]any{"default_currency": ccy, "payment_terms": terms})
+		if code != 200 && !(code == 409 && out["reason"] == "STATE_CONFLICT") { // a retired role stays retired
+			fail("supplier role %s/%s: %d %v", p, le, code, out)
+		}
+		sroles++
+	}
+	for i, p := range suppliers {
+		supplierRole(p, "CN01", "CNY", terms[i%len(terms)])
+		if i%3 == 0 { // a Chinese supplier of the Spanish entity, in euros
+			supplierRole(p, "ES01", "EUR", "NET60")
+		}
+	}
+	for _, o := range orgs {
+		switch {
+		case o.country == "CN" && o.i%4 == 1: // a customer that also supplies
+			supplierRole(o.id, "CN01", "CNY", "NET30")
+		case o.country == "ES" && o.i%3 == 1:
+			supplierRole(o.id, "ES01", "EUR", terms[o.i%len(terms)])
+			if o.i%6 == 1 { // a supplier of CN01 paid in euros
+				supplierRole(o.id, "CN01", "EUR", "NET45")
+			}
+		case o.country == "US" && o.i%3 == 2:
+			supplierRole(o.id, "US01", "USD", terms[o.i%len(terms)])
+			if o.i%5 == 2 { // a supplier of CN01 paid in dollars
+				supplierRole(o.id, "CN01", "USD", "NET30")
+			}
+		}
+	}
+	supplierRole(suspended, "CN01", "CNY", "NET30") // the partner is suspended: not eligible though the role is active
 	// HK01: open what is missing while it is active, then suspend it again (business came before the suspension)
 	var missing []string
 	for _, p := range hk {
@@ -396,7 +440,9 @@ func main() {
 	state("/api/partner/partners/"+orgs[1].id+"/roles/customer/"+les["CN01"]+"/state", "suspended")
 	state("/api/partner/partners/"+orgs[3].id+"/roles/customer/"+les["CN01"]+"/state", "retired")
 	state("/api/partner/partners/"+orgs[firstUS].id+"/roles/customer/"+les["US01"]+"/state", "suspended")
-	fmt.Printf("seed mdm/partner: %d partners (%d organizations, %d persons, 3 negative), %d customer roles in CN01, ES01, "+
-		"US01 and the suspended HK01, 3 negative roles, 1 merge candidate; unit 中国区客户 with its admin\n",
-		len(orgs)+len(persons)+3, len(orgs), len(persons), roles)
+	state("/api/partner/partners/"+suppliers[1]+"/roles/supplier/"+les["CN01"]+"/state", "suspended")
+	state("/api/partner/partners/"+suppliers[2]+"/roles/supplier/"+les["CN01"]+"/state", "retired")
+	fmt.Printf("seed mdm/partner: %d partners (%d organizations, %d of them suppliers only, %d persons, 3 negative), %d customer "+
+		"roles in CN01, ES01, US01 and the suspended HK01, %d supplier roles, 5 negative roles, 1 merge candidate; unit 中国区客户 "+
+		"with its admin\n", len(orgs)+len(suppliers)+len(persons)+3, len(orgs)+len(suppliers), len(suppliers), len(persons), roles, sroles)
 }
