@@ -18,7 +18,7 @@ import (
 
 // Identity of the component.
 const (
-	Version  = "3.0.46"
+	Version  = "3.0.47"
 	GRPCPort = 9225
 	// Org is the component the legal entities belong to: a required dependency.
 )
