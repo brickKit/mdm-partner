@@ -17,6 +17,8 @@ paths:
         - {name: state, in: query, schema: {enum: [active, suspended, retired]}}
         - {name: kind, in: query, schema: {enum: [organization, person]}}
         - {name: q, in: query, schema: {type: string}, description: 'keyword over names and the tax ID (folded, pinyin)'}
+        - {name: role, in: query, schema: {enum: [customer, supplier]}, description: 'only partners with an active role of this kind'}
+        - {name: legal_entity_id, in: query, schema: {type: string, format: uuid}, description: 'with role: the role in this legal entity'}
         - $ref: '#/components/parameters/cursor'
         - $ref: '#/components/parameters/limit'
       responses:

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/google/uuid"
 	"strings"
 
 	core "github.com/brickKit/mdm-partner/v3/internal/core"
@@ -339,11 +340,30 @@ func ListPartners(m *core.Base, c *httpx.Context) error {
 			f = append(f, list.Filter{Field: k, Op: "eq", Values: []string{v}})
 		}
 	}
+	role, le := c.Query("role"), c.Query("legal_entity_id")
+	switch {
+	case role != "" && role != "customer" && role != "supplier":
+		return core.Invalid("role", "customer or supplier")
+	case le != "" && role == "":
+		return core.Invalid("legal_entity_id", "only with a role")
+	case le != "" && uuid.Validate(le) != nil:
+		return core.Invalid("legal_entity_id", "a UUID")
+	}
 	s, _ := sdkauthz.From(c.Ctx())
 	ctx, q, err := list.Build(c.Ctx(), s, partnerList, list.Request{Filters: f, Q: c.Query("q"), Limit: limit,
 		Cursor: c.Query("cursor"), Sort: []list.Order{{Field: "name"}}})
 	if err != nil {
 		return err
+	}
+	if role != "" { // partners with an active role of that kind (in that legal entity when given)
+		q.Args = append(q.Args, role)
+		cond := fmt.Sprintf("r.role = $%d", len(q.Args))
+		if le != "" {
+			q.Args = append(q.Args, le)
+			cond += fmt.Sprintf(" AND r.legal_entity_id = $%d::uuid", len(q.Args))
+		}
+		q.Where = "(" + q.Where + ") AND EXISTS (SELECT 1 FROM partner_role r WHERE r.partner_id = p.id AND r.state = 'active' AND " +
+			cond + ")"
 	}
 	out, next, err := list.Page(ctx, m.RT.DB, q, "partner", core.PartnerCols, core.ScanPartner,
 		func(p core.Partner) ([]string, string) { return []string{p.Name}, p.ID })
